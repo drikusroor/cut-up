@@ -1,6 +1,7 @@
 // Web Audio playback. Everything is synthesised on the fly — no samples, so
 // the whole app stays a handful of text files.
 
+import { arrange } from './arrange.js';
 import { stepTime } from './rhythm.js';
 
 export class AudioEngine {
@@ -75,19 +76,13 @@ export class AudioEngine {
     const {
       tempo = 100,
       swing = 0,
-      chordVoicings = [],
-      stepsPerChord = 16,
-      melody = [],
-      rhythm = null,
       loop = true,
       parts = { chords: true, melody: true, drums: true },
     } = song;
 
+    // Shorter parts repeat to fill the loop — see arrange().
+    const { totalSteps, chords, melody, drums } = arrange(song);
     const secondsPerStep = 60 / tempo / 4;
-    const drumSteps = rhythm?.tracks?.[0]?.pattern.length ?? 0;
-    const chordSteps = chordVoicings.length * stepsPerChord;
-    const melodySteps = melody.reduce((max, n) => Math.max(max, n.step + n.length), 0);
-    const totalSteps = song.totalSteps || Math.max(drumSteps, chordSteps, melodySteps, 16);
 
     this.secondsPerStep = secondsPerStep;
     this.loopSeconds = totalSteps * secondsPerStep;
@@ -95,14 +90,14 @@ export class AudioEngine {
 
     const schedule = (at) => {
       if (parts.chords) {
-        chordVoicings.forEach((voicing, index) => {
-          const time = at + index * stepsPerChord * secondsPerStep;
-          const duration = stepsPerChord * secondsPerStep * 0.96;
-          voicing.forEach((midi, voice) => {
+        for (const chord of chords) {
+          const time = at + chord.step * secondsPerStep;
+          const duration = chord.length * secondsPerStep * 0.96;
+          chord.voicing.forEach((midi, voice) => {
             // Tiny spread so the chord sounds strummed rather than stamped.
             this.pad(midi, time + voice * 0.012, duration, 0.16);
           });
-        });
+        }
       }
       if (parts.melody) {
         for (const note of melody) {
@@ -114,14 +109,10 @@ export class AudioEngine {
           );
         }
       }
-      if (parts.drums && rhythm) {
-        for (const track of rhythm.tracks) {
-          track.pattern.forEach((on, step) => {
-            if (!on) return;
-            const time = at + stepTime(step, secondsPerStep, swing);
-            const gain = ((track.velocities?.[step] || 100) / 127) * 0.7;
-            this.drum(track.id, time, gain);
-          });
+      if (parts.drums) {
+        for (const hit of drums) {
+          const time = at + stepTime(hit.step, secondsPerStep, swing);
+          this.drum(hit.id, time, (hit.velocity / 127) * 0.7);
         }
       }
     };

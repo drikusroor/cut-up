@@ -1,6 +1,8 @@
 // A minimal type-1 MIDI writer, so anything the app generates can be dragged
 // straight into a DAW. No dependencies — MIDI is just bytes.
 
+import { arrange } from './arrange.js';
+
 const TICKS_PER_QUARTER = 480;
 const STEPS_PER_QUARTER = 4; // the app works on a sixteenth-note grid
 export const TICKS_PER_STEP = TICKS_PER_QUARTER / STEPS_PER_QUARTER;
@@ -110,30 +112,24 @@ export function stepToTicks(step, swing = 0) {
  * @returns {Uint8Array}
  */
 export function songToMidi(song) {
-  const {
-    tempo = 100,
-    swing = 0,
-    chordVoicings = [],
-    stepsPerChord = 16,
-    melody = [],
-    rhythm = null,
-  } = song;
+  const { tempo = 100, swing = 0 } = song;
+  // Same layout the audio engine plays, so the export is what you just heard.
+  const { chords, melody, drums } = arrange(song);
 
   const tracks = [];
 
-  if (chordVoicings.length) {
+  if (chords.length) {
     const notes = [];
-    chordVoicings.forEach((voicing, index) => {
-      const start = index * stepsPerChord;
-      for (const midi of voicing) {
+    for (const chord of chords) {
+      for (const midi of chord.voicing) {
         notes.push({
           midi,
-          tick: stepToTicks(start, 0),
-          durationTicks: stepsPerChord * TICKS_PER_STEP - 10,
+          tick: stepToTicks(chord.step, 0),
+          durationTicks: Math.max(1, chord.length * TICKS_PER_STEP - 10),
           velocity: 80,
         });
       }
-    });
+    }
     tracks.push({ name: 'Chords', channel: 0, notes });
   }
 
@@ -150,21 +146,18 @@ export function songToMidi(song) {
     });
   }
 
-  if (rhythm?.tracks?.length) {
-    const notes = [];
-    for (const track of rhythm.tracks) {
-      track.pattern.forEach((on, step) => {
-        if (!on) return;
-        notes.push({
-          midi: track.note,
-          tick: stepToTicks(step, swing),
-          durationTicks: Math.round(TICKS_PER_STEP / 2),
-          velocity: track.velocities?.[step] || 100,
-        });
-      });
-    }
-    // Channel 9 is channel 10 in one-based MIDI speak: the drum channel.
-    tracks.push({ name: 'Drums', channel: 9, notes });
+  if (drums.length) {
+    tracks.push({
+      name: 'Drums',
+      // Channel 9 is channel 10 in one-based MIDI speak: the drum channel.
+      channel: 9,
+      notes: drums.map((hit) => ({
+        midi: hit.note,
+        tick: stepToTicks(hit.step, swing),
+        durationTicks: Math.round(TICKS_PER_STEP / 2),
+        velocity: hit.velocity,
+      })),
+    });
   }
 
   return buildMidiFile({ tempo, tracks });

@@ -8,11 +8,13 @@ import {
   diatonicChord,
   generateProgression,
   parseChords,
+  SCALES,
   scalePitchClasses,
   voiceProgression,
 } from '../src/music/theory.js';
 import { cutUpPattern, euclidean, generateRhythm, stepTime } from '../src/music/rhythm.js';
-import { generateMelody, transformMelody } from '../src/music/melody.js';
+import { generateMelody, MELODY_SHAPES, transformMelody } from '../src/music/melody.js';
+import { arrange } from '../src/music/arrange.js';
 import { buildMidiFile, songToMidi, stepToTicks, writeVarInt } from '../src/music/midi.js';
 
 // --- theory -----------------------------------------------------------------
@@ -175,6 +177,26 @@ test('melody stays in range, in key and on the grid', () => {
   }
 });
 
+test('a melody never locks onto a single pitch', () => {
+  // A drift of one or two semitones often rounds back to the note we are on —
+  // a triad is four semitones wide — which used to flatten the whole line.
+  for (const scale of SCALES) {
+    for (const shape of MELODY_SHAPES) {
+      for (let seed = 0; seed < 12; seed++) {
+        const chords = generateProgression({
+          rng: makeRng(`chords:${seed}`), rootPc: 9, scaleId: scale.id, length: 4, mode: 'functional', sevenths: 0.2, spice: 0.15,
+        });
+        const notes = generateMelody({
+          rng: makeRng(`melody:${seed}`), chords, rootPc: 9, scaleId: scale.id, stepsPerChord: 16, shape: shape.id, range: [60, 84],
+        });
+        if (notes.length < 4) continue;
+        const pitches = new Set(notes.map((n) => n.midi));
+        assert.ok(pitches.size > 2, `${scale.id}/${shape.id}/${seed} flattened to ${[...pitches]}`);
+      }
+    }
+  }
+});
+
 test('melody generation is reproducible', () => {
   const options = {
     chords: parseChords('Am F C G'),
@@ -210,6 +232,66 @@ test('bar shuffle keeps every note inside the phrase', () => {
 });
 
 // --- midi -------------------------------------------------------------------
+
+// --- arrangement ------------------------------------------------------------
+
+test('a short drum pattern repeats under a longer progression', () => {
+  const rhythm = generateRhythm({ rng: makeRng('r'), steps: 16, bars: 2, trackIds: ['kick'] });
+  const { totalSteps, drums } = arrange({
+    chordVoicings: voiceProgression(parseChords('Am F C G'), { octave: 3 }),
+    stepsPerChord: 16,
+    rhythm,
+  });
+
+  assert.equal(totalSteps, 64);
+  assert.ok(drums.length, 'expected some drum hits');
+  // The bug: hits stopped at step 32 and the last two bars fell silent.
+  assert.ok(drums.some((hit) => hit.step >= 32), 'drums must carry on past the pattern length');
+  assert.ok(drums.every((hit) => hit.step < totalSteps), 'no hit may land past the loop');
+
+  // Each repeat is the pattern again, moved along by its own length.
+  const first = drums.filter((h) => h.step < 32).map((h) => h.step);
+  const second = drums.filter((h) => h.step >= 32).map((h) => h.step - 32);
+  assert.deepEqual(second, first);
+});
+
+test('a short progression repeats under longer drums', () => {
+  const { totalSteps, chords, melody } = arrange({
+    chordVoicings: voiceProgression(parseChords('Am F'), { octave: 3 }),
+    stepsPerChord: 16,
+    melody: [{ midi: 72, step: 0, length: 4 }],
+    rhythm: generateRhythm({ rng: makeRng('r'), steps: 16, bars: 4, trackIds: ['kick'] }),
+  });
+
+  assert.equal(totalSteps, 64);
+  assert.deepEqual(chords.map((c) => c.step), [0, 16, 32, 48]);
+  assert.deepEqual(chords[0].voicing, chords[2].voicing);
+  // The melody rides on the progression, so it comes round with it.
+  assert.deepEqual(melody.map((n) => n.step), [0, 32]);
+});
+
+test('a repeat that overruns the loop is clipped, not dropped', () => {
+  const { chords } = arrange({
+    chordVoicings: voiceProgression(parseChords('Am F'), { octave: 3 }),
+    stepsPerChord: 16,
+    totalSteps: 40,
+  });
+  assert.deepEqual(chords.map((c) => [c.step, c.length]), [[0, 16], [16, 16], [32, 8]]);
+});
+
+test('exported MIDI carries the repeats it plays', () => {
+  const song = {
+    tempo: 100,
+    chordVoicings: voiceProgression(parseChords('Am F C G'), { octave: 3 }),
+    stepsPerChord: 16,
+    rhythm: generateRhythm({ rng: makeRng('r'), steps: 16, bars: 2, trackIds: ['kick'] }),
+  };
+  const hits = arrange(song).drums.length;
+  const bytes = songToMidi(song);
+  // One note-on and one note-off per hit, all on the drum channel.
+  const noteOns = [...bytes].filter((b, i) => b === 0x99 && [...bytes][i + 1] === 36).length;
+  assert.equal(noteOns, hits);
+});
 
 test('variable-length quantities match the MIDI spec', () => {
   assert.deepEqual(writeVarInt(0), [0x00]);
