@@ -2,7 +2,7 @@
 // straight into a DAW. No dependencies — MIDI is just bytes.
 
 import { arrange } from './arrange.js';
-import { harmonyInstrument, leadInstrument } from './instruments.js';
+import { bassInstrument, harmonyInstrument, leadInstrument } from './instruments.js';
 
 const TICKS_PER_QUARTER = 480;
 const STEPS_PER_QUARTER = 4; // the app works on a sixteenth-note grid
@@ -122,13 +122,16 @@ export function stepToTicks(step, swing = 0) {
  * @param {number[][]} [song.chordVoicings] MIDI notes per chord
  * @param {number} [song.stepsPerChord]
  * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.melody]
+ * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.bass]
  * @param {{steps:number, bars:number, tracks:Array<{note:number, pattern:boolean[], velocities:number[]}>}} [song.rhythm]
  * @returns {Uint8Array}
  */
 export function songToMidi(song) {
   const { tempo = 100, swing = 0, instruments = {} } = song;
   // Same layout the audio engine plays, so the export is what you just heard.
-  const { chords, melody, drums } = arrange(song);
+  const {
+    chords, melody, bass, drums,
+  } = arrange(song);
 
   const tracks = [];
 
@@ -159,6 +162,20 @@ export function songToMidi(song) {
         durationTicks: Math.max(1, n.length * TICKS_PER_STEP - 8),
         velocity: n.velocity ?? 96,
         program: leadInstrument(n.instrument || instruments.lead).program,
+      })),
+    });
+  }
+
+  if (bass.length) {
+    tracks.push({
+      name: 'Bass',
+      channel: 2,
+      notes: bass.map((n) => ({
+        midi: n.midi,
+        tick: stepToTicks(n.step, swing),
+        durationTicks: Math.max(1, n.length * TICKS_PER_STEP - 8),
+        velocity: n.velocity ?? 100,
+        program: bassInstrument(n.instrument || instruments.bass).program,
       })),
     });
   }

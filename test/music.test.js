@@ -23,6 +23,8 @@ import {
 } from '../src/music/rhythm.js';
 import {
   AUTO,
+  BASS_INSTRUMENTS,
+  bassInstrument,
   DRUM_KITS,
   drumKit,
   HARMONY_INSTRUMENTS,
@@ -30,10 +32,12 @@ import {
   instrumentOptions,
   LEAD_INSTRUMENTS,
   leadInstrument,
+  resolveBass,
   resolveInstruments,
   resolveKit,
   resolveLead,
 } from '../src/music/instruments.js';
+import { BASS_STYLES, generateBass, readDrums } from '../src/music/bass.js';
 import {
   applyMelodyEdits,
   emptyMelodyEdits,
@@ -413,10 +417,250 @@ test('hand edits survive a transform, because the notes keep their ids', () => {
   assert.equal(moved.step, 0, 'and it lands where the transform put it');
 });
 
+// --- bass -------------------------------------------------------------------
+
+/** A hand-written drum lane: true at the given steps, false everywhere else. */
+const onSteps = (length, steps) => Array.from({ length }, (_, i) => steps.includes(i));
+
+const backbeat = (seed = 'kit') => generateRhythm({
+  rng: makeRng(seed), steps: 16, bars: 2, style: 'backbeat', density: 0.6, trackIds: ['kick', 'snare', 'hat'],
+});
+
+const bassOptions = (extra = {}) => ({
+  chords: parseChords('Am F C G'),
+  rootPc: 9,
+  scaleId: 'minor',
+  stepsPerChord: 16,
+  rhythm: backbeat(),
+  ...extra,
+});
+
+test('the kit is read by role, so a pattern is heard rather than named', () => {
+  const kit = generateRhythm({
+    rng: makeRng('roles'), steps: 16, bars: 1, density: 0.6, trackIds: ['kick', 'snare', 'tom', 'hat'],
+  });
+  const heard = readDrums(kit);
+  const pattern = (id) => kit.tracks.find((t) => t.id === id).pattern;
+  assert.equal(heard.length, 16);
+  assert.deepEqual(heard.kick, pattern('kick'));
+  assert.deepEqual(heard.backbeat, pattern('snare'));
+  assert.deepEqual(heard.turn, pattern('tom'), 'a tom fill is the kit announcing a change');
+  // Nothing at all is a silent kit rather than an exception.
+  assert.deepEqual(readDrums(null), {
+    length: 0, kick: [], backbeat: [], turn: [],
+  });
+});
+
+test('a bass line stays on the grid, in its register, and is reproducible', () => {
+  for (const style of BASS_STYLES) {
+    const options = bassOptions({ style: style.id, octave: 2 });
+    const notes = generateBass({ ...options, rng: makeRng('bass') });
+    assert.ok(notes.length >= 4, `${style.id} produced ${notes.length} notes`);
+    for (const note of notes) {
+      assert.ok(note.midi >= 28 && note.midi <= 52, `${style.id}: ${note.midi} is out of register`);
+      assert.ok(note.step >= 0 && note.step + note.length <= 64, `${style.id}: ${note.step}+${note.length}`);
+      assert.ok(note.length > 0 && note.velocity >= 40 && note.velocity <= 127);
+    }
+    assert.equal(new Set(notes.map((n) => n.id)).size, notes.length, 'ids must be unique');
+    assert.deepEqual(generateBass({ ...options, rng: makeRng('bass') }), notes, `${style.id} is not reproducible`);
+  }
+  assert.deepEqual(generateBass({ rng: makeRng('x'), chords: [] }), [], 'no chords, no bass');
+});
+
+test('the register moves the whole line without changing what it plays', () => {
+  const notes = (octave) => generateBass({ ...bassOptions({ octave }), rng: makeRng('reg') });
+  const deep = notes(1);
+  const high = notes(3);
+  assert.deepEqual(deep.map((n) => n.step), high.map((n) => n.step), 'the rhythm is the same either way');
+  assert.ok(Math.max(...deep.map((n) => n.midi)) < Math.min(...high.map((n) => n.midi)) + 12);
+  assert.ok(deep.every((n) => n.midi >= 16 && n.midi <= 40));
+});
+
+test('every chord change has a bass note sounding under it', () => {
+  // Either struck on the change or held into it from the anticipation before —
+  // which is the one case where the downbeat is deliberately left empty.
+  for (const style of BASS_STYLES) {
+    for (let seed = 0; seed < 12; seed++) {
+      const notes = generateBass({
+        ...bassOptions({ style: style.id, motion: 1, rhythm: backbeat(`kit${seed}`) }),
+        rng: makeRng(`change:${seed}`),
+      });
+      for (const change of [0, 16, 32, 48]) {
+        const sounding = notes.find((n) => n.step <= change && n.step + n.length > change);
+        assert.ok(sounding, `${style.id}/${seed}: nothing under the chord at step ${change}`);
+      }
+    }
+  }
+});
+
+test('a line locked to the kick only plays where the drums or the chords do', () => {
+  const rhythm = backbeat('locked');
+  const kick = readDrums(rhythm).kick;
+  for (let seed = 0; seed < 8; seed++) {
+    const notes = generateBass({
+      ...bassOptions({ style: 'lock', density: 1, rhythm }),
+      rng: makeRng(`lock:${seed}`),
+    });
+    for (const note of notes) {
+      const onKick = kick[note.step % kick.length];
+      const onChange = note.step % 16 === 0;
+      // Anything else has to be an anticipation, and those lean into a change.
+      const leaning = note.step % 16 >= 14;
+      assert.ok(onKick || onChange || leaning, `step ${note.step} is neither kick, change nor lean`);
+    }
+    assert.ok(
+      notes.filter((n) => kick[n.step % kick.length]).length >= notes.length / 2,
+      'most of the line should be sitting on the kick',
+    );
+  }
+});
+
+test('a walking line puts a note on every beat and approaches the next root', () => {
+  const chords = parseChords('Am F C G');
+  const notes = generateBass({
+    ...bassOptions({ style: 'walk', chords, motion: 1, density: 0 }),
+    rng: makeRng('walk'),
+  });
+  const steps = new Set(notes.map((n) => n.step));
+  for (let beat = 0; beat < 64; beat += 4) {
+    // Every beat is covered, either by its own note or by one tied over it.
+    assert.ok(
+      steps.has(beat) || notes.some((n) => n.step < beat && n.step + n.length > beat),
+      `nothing on beat ${beat / 4}`,
+    );
+  }
+  // The note before each change leans towards the root that is coming: within a
+  // whole tone of it, a fifth above it, or the root itself.
+  for (const change of [16, 32, 48]) {
+    const before = notes.filter((n) => n.step < change).pop();
+    const target = chords[(change / 16) % chords.length].rootPc;
+    const gap = ((before.midi - target) % 12 + 12) % 12;
+    assert.ok(
+      [0, 1, 2, 10, 11, 7].includes(gap),
+      `the note before step ${change} is ${gap} semitones off the next root`,
+    );
+  }
+});
+
+test('the bass leans into the kick when the kick moves off the beat', () => {
+  // Two kits, identical but for where the kick falls. The line has to follow.
+  const straight = { tracks: [{ id: 'kick', role: 'low', pattern: onSteps(32, [0, 8, 16, 24]) }] };
+  const pushed = { tracks: [{ id: 'kick', role: 'low', pattern: onSteps(32, [0, 7, 16, 23]) }] };
+  const onKick = (rhythm) => {
+    const notes = generateBass({
+      ...bassOptions({ style: 'lock', density: 1, rhythm }), rng: makeRng('follow'),
+    });
+    const kick = readDrums(rhythm).kick;
+    return notes.filter((n) => kick[n.step % kick.length]).length;
+  };
+  assert.ok(onKick(straight) >= 4);
+  assert.ok(onKick(pushed) >= 4);
+  // And a kit with nothing in it still gets a floor under the chords.
+  const dry = generateBass({ ...bassOptions({ style: 'lock', rhythm: null }), rng: makeRng('dry') });
+  assert.ok(dry.length >= 4, 'a bass with no drums still has to play');
+});
+
+test('the bass answers a fill instead of ignoring it', () => {
+  const withFill = {
+    tracks: [
+      { id: 'kick', role: 'low', pattern: onSteps(32, [0, 16]) },
+      // A tom run across the last beat of the phrase: the drummer's hand-off.
+      { id: 'tom', role: 'fill', pattern: onSteps(32, [28, 29, 30, 31]) },
+    ],
+  };
+  const dry = { tracks: [withFill.tracks[0]] };
+  const busyOverFill = (rhythm) => generateBass({
+    ...bassOptions({ style: 'roots', density: 1, motion: 0, rhythm }),
+    rng: makeRng('fill'),
+  }).filter((n) => n.step >= 28).length;
+  assert.ok(busyOverFill(withFill) > busyOverFill(dry), 'the fill should pull notes out of the bass');
+});
+
+/**
+ * Counts, over a spread of seeds and styles, how often the bass moves against
+ * the melody and how often it lands a semitone off it. Both are weighted
+ * preferences rather than rules, so they can only be judged as rates.
+ */
+function counterpoint(counter) {
+  const rhythm = backbeat('counterpoint');
+  let clashes = 0;
+  let notes = 0;
+  let contrary = 0;
+  let motions = 0;
+
+  for (let seed = 0; seed < 12; seed++) {
+    const chords = generateProgression({
+      rng: makeRng(`p${seed}`), rootPc: 9, scaleId: 'minor', length: 4, mode: 'functional', sevenths: 0.2, spice: 0.15,
+    });
+    const melody = generateMelody({
+      rng: makeRng(`m${seed}`), chords, rootPc: 9, scaleId: 'minor', stepsPerChord: 16, range: [60, 84],
+    });
+    const sounding = (step) => melody.find((n) => n.step <= step && n.step + n.length > step);
+
+    for (const style of BASS_STYLES) {
+      let previous = null;
+      let previousStep = 0;
+      for (const note of generateBass({
+        rng: makeRng(`b${seed}`),
+        chords,
+        rootPc: 9,
+        scaleId: 'minor',
+        stepsPerChord: 16,
+        style: style.id,
+        counter,
+        melody,
+        rhythm,
+      })) {
+        const tune = sounding(note.step);
+        const before = sounding(previousStep);
+        if (tune) {
+          notes += 1;
+          const interval = ((note.midi - tune.midi) % 12 + 12) % 12;
+          if (interval === 1 || interval === 11) clashes += 1;
+          // Only the moments where both parts actually moved say anything
+          // about whether they moved against each other.
+          if (previous != null && before && before.midi !== tune.midi && previous !== note.midi) {
+            motions += 1;
+            if (Math.sign(note.midi - previous) === -Math.sign(tune.midi - before.midi)) contrary += 1;
+          }
+        }
+        previous = note.midi;
+        previousStep = note.step;
+      }
+    }
+  }
+
+  return { notes, clashes: clashes / notes, motions, contrary: contrary / motions };
+}
+
+test('the bass moves against the melody, and keeps off the note it is standing on', () => {
+  const with0 = counterpoint(0);
+  const with1 = counterpoint(1);
+  assert.ok(with1.notes > 300 && with1.motions > 80, 'not enough notes to judge');
+
+  // Left to itself the line goes whichever way is nearest, so it agrees with
+  // the melody about half the time. Turned up, it should be pulling the other
+  // way far more often than that.
+  assert.ok(with0.contrary < 0.6, `${(with0.contrary * 100).toFixed(0)}% contrary with the slider off`);
+  assert.ok(with1.contrary > 0.7, `only ${(with1.contrary * 100).toFixed(0)}% contrary with it up`);
+
+  // A semitone against the tune is the one interval the bass should almost
+  // never pick; the few that survive are chord roots it has no choice about.
+  assert.ok(with1.clashes < 0.08, `${(with1.clashes * 100).toFixed(0)}% of the line fights the tune`);
+});
+
+test('a section with no bass in it plays no bass', () => {
+  const a = testSection('A', 'Am F', { music: { bassOn: false, bass: [{ midi: 36, step: 0, length: 4 }] } });
+  assert.deepEqual(sectionSong(a).bass, []);
+  // And one saved before the bass existed at all is simply silent down there.
+  assert.deepEqual(sectionSong(testSection('B', 'Am F')).bass, []);
+});
+
 // --- instruments -------------------------------------------------------------
 
 test('every voice is a recipe the engine can actually build', () => {
-  for (const [kind, list] of [['lead', LEAD_INSTRUMENTS], ['harmony', HARMONY_INSTRUMENTS]]) {
+  const lists = [['lead', LEAD_INSTRUMENTS], ['harmony', HARMONY_INSTRUMENTS], ['bass', BASS_INSTRUMENTS]];
+  for (const [kind, list] of lists) {
     assert.equal(new Set(list.map((i) => i.id)).size, list.length, `${kind} ids must be unique`);
     for (const voice of list) {
       assert.ok(voice.label && voice.hint, `${voice.id} needs a label and a hint`);
@@ -448,6 +692,8 @@ test('an instrument left on auto comes from the seed, and comes back with it', (
 
 test('a pinned instrument beats the seed, and nonsense falls back to it', () => {
   assert.equal(resolveLead('bell', 'anything'), 'bell');
+  assert.equal(resolveBass('upright', 'anything'), 'upright');
+  assert.equal(bassInstrument('sousaphone').id, BASS_INSTRUMENTS[0].id);
   assert.equal(resolveKit('808', 'anything'), '808');
   // A section saved before an instrument was renamed must still play.
   assert.equal(resolveLead('theremin', 'x'), resolveLead(AUTO, 'x'));
@@ -456,12 +702,15 @@ test('a pinned instrument beats the seed, and nonsense falls back to it', () => 
   assert.equal(drumKit('nope').id, DRUM_KITS[0].id);
 });
 
-test('the three voices of a piece of music are resolved together', () => {
+test('the four voices of a piece of music are resolved together', () => {
   const sound = resolveInstruments(
-    { leadInstrument: 'flute', harmonyInstrument: AUTO, chordSeed: 'abc', melodySeed: 'def' },
+    {
+      leadInstrument: 'flute', harmonyInstrument: AUTO, bassInstrument: 'sub', chordSeed: 'abc', melodySeed: 'def',
+    },
     { kit: '909', seed: 'ghi' },
   );
   assert.equal(sound.lead, 'flute');
+  assert.equal(sound.bass, 'sub');
   assert.equal(sound.kit, '909');
   assert.equal(sound.harmony, resolveInstruments({ harmonyInstrument: AUTO, chordSeed: 'abc' }).harmony);
   // Missing state is a blank slate, not a crash.
@@ -587,7 +836,9 @@ test('a section carries its own voices, and they travel with it into the song', 
     music: { leadInstrument: 'flute', harmonyInstrument: 'strings' },
     rhythm: { kit: 'toybox', pattern: kick('b') },
   });
-  assert.deepEqual(sectionSong(a).instruments, { lead: 'bell', harmony: 'organ', kit: '808' });
+  assert.deepEqual(sectionSong(a).instruments, {
+    lead: 'bell', harmony: 'organ', bass: resolveBass(AUTO, undefined), kit: '808',
+  });
 
   const plan = buildSongPlan([a, b], [{ sectionId: a.id }, { sectionId: b.id }]);
   const laid = arrange({ sections: plan.blocks.map((x) => x.song) });
@@ -700,12 +951,36 @@ test('a loop tags every event with the voice it is played on', () => {
     chordVoicings: voiceProgression(parseChords('Am F'), { octave: 3 }),
     stepsPerChord: 16,
     melody: [{ midi: 72, step: 0, length: 4 }],
+    bass: [{ midi: 45, step: 0, length: 8 }],
     rhythm: generateRhythm({ rng: makeRng('r'), steps: 16, bars: 1, trackIds: ['kick'] }),
-    instruments: { lead: 'pluck', harmony: 'rhodes', kit: 'tape' },
+    instruments: {
+      lead: 'pluck', harmony: 'rhodes', bass: 'upright', kit: 'tape',
+    },
   });
   assert.ok(laid.chords.length && laid.chords.every((c) => c.instrument === 'rhodes'));
   assert.ok(laid.melody.length && laid.melody.every((n) => n.instrument === 'pluck'));
+  assert.ok(laid.bass.length && laid.bass.every((n) => n.instrument === 'upright'));
   assert.ok(laid.drums.length && laid.drums.every((h) => h.kit === 'tape'));
+});
+
+test('the bass rides on the progression, the same way the melody does', () => {
+  const { totalSteps, bass, melody } = arrange({
+    chordVoicings: voiceProgression(parseChords('Am F'), { octave: 3 }),
+    stepsPerChord: 16,
+    melody: [{ midi: 72, step: 0, length: 4 }],
+    bass: [{ midi: 45, step: 0, length: 4 }, { midi: 41, step: 16, length: 4 }],
+    rhythm: generateRhythm({ rng: makeRng('r'), steps: 16, bars: 4, trackIds: ['kick'] }),
+  });
+  assert.equal(totalSteps, 64);
+  // Two chords of bass under four bars of drums: it comes round with them.
+  assert.deepEqual(bass.map((n) => [n.midi, n.step]), [[45, 0], [41, 16], [45, 32], [41, 48]]);
+  assert.deepEqual(melody.map((n) => n.step), [0, 32]);
+});
+
+test('a bass line on its own still sets the length of the loop', () => {
+  const { totalSteps, bass } = arrange({ bass: [{ midi: 36, step: 0, length: 32 }] });
+  assert.equal(totalSteps, 32);
+  assert.equal(bass.length, 1);
 });
 
 test('a short drum pattern repeats under a longer progression', () => {
@@ -790,7 +1065,7 @@ test('a MIDI file has a valid header and one chunk per track', () => {
   assert.equal(text.endsWith(String.fromCharCode(0x00, 0xff, 0x2f, 0x00)), true);
 });
 
-test('songToMidi includes chords, melody and drums on separate channels', () => {
+test('songToMidi includes chords, melody, bass and drums on separate channels', () => {
   const chords = parseChords('Am F');
   const bytes = songToMidi({
     tempo: 100,
@@ -798,12 +1073,19 @@ test('songToMidi includes chords, melody and drums on separate channels', () => 
     chordVoicings: voiceProgression(chords, { octave: 3 }),
     stepsPerChord: 16,
     melody: [{ midi: 72, step: 0, length: 4, velocity: 100 }],
+    bass: [{ midi: 45, step: 0, length: 8, velocity: 104 }],
+    instruments: { bass: 'upright' },
     rhythm: generateRhythm({ rng: makeRng('r'), steps: 16, bars: 1, trackIds: ['kick'] }),
   });
   const text = String.fromCharCode(...bytes);
-  assert.equal((text.match(/MTrk/g) || []).length, 4); // tempo + three parts
+  assert.equal((text.match(/MTrk/g) || []).length, 5); // tempo + four parts
   assert.ok(bytes.includes(0x99), 'drums should be on channel 10');
   assert.ok(bytes.includes(0x91), 'melody should be on channel 2');
+  assert.ok(bytes.includes(0x92), 'bass should be on channel 3');
+  assert.deepEqual(
+    programChanges(readMidi(bytes).flat()).filter((e) => (e.status & 0x0f) === 2).map((e) => e.data[0]),
+    [bassInstrument('upright').program],
+  );
 });
 
 test('step-to-tick conversion applies swing to off-steps', () => {

@@ -168,6 +168,110 @@ export const LEAD_INSTRUMENTS = [
   },
 ];
 
+/**
+ * Voices for the bass. Everything down here lives an octave or two below the
+ * chords, so the recipes are darker than they look: the filters close early and
+ * the bright partials are there for the attack rather than for the tone.
+ */
+export const BASS_INSTRUMENTS = [
+  {
+    id: 'finger',
+    label: 'Fingered bass',
+    hint: 'Round and woody. The one a hand on a string sounds like.',
+    program: 33,
+    gain: 1,
+    env: { attack: 0.006, decay: 0.35, sustain: 0.45, release: 0.09 },
+    filter: { type: 'lowpass', from: 2200, to: 620, time: 0.18, q: 1.2 },
+    partials: [
+      { type: 'triangle', level: 1 },
+      { type: 'sawtooth', level: 0.35, decay: 0.16 },
+      { type: 'sine', ratio: 2, level: 0.2, decay: 0.3 },
+    ],
+    noise: { level: 0.1, decay: 0.012, type: 'highpass', frequency: 1800 },
+  },
+  {
+    id: 'sub',
+    label: 'Sub',
+    hint: 'Almost a pure sine. Felt more than heard.',
+    program: 38,
+    gain: 0.9,
+    env: { attack: 0.008, decay: 0.25, sustain: 0.85, release: 0.09 },
+    filter: { type: 'lowpass', from: 900, to: 320, time: 0.25, q: 0.7 },
+    partials: [
+      { type: 'sine', level: 1 },
+      { type: 'sine', ratio: 2, level: 0.12, decay: 0.09 },
+    ],
+  },
+  {
+    id: 'pick',
+    label: 'Picked bass',
+    hint: 'A plectrum on the attack — cuts through a busy kit.',
+    program: 34,
+    gain: 1,
+    env: { attack: 0.003, decay: 0.28, sustain: 0.3, release: 0.08 },
+    filter: { type: 'lowpass', from: 3200, to: 800, time: 0.12, q: 1.6 },
+    partials: [
+      { type: 'sawtooth', level: 0.9 },
+      { type: 'square', ratio: 2, level: 0.16, decay: 0.06 },
+    ],
+    noise: { level: 0.24, decay: 0.008, type: 'highpass', frequency: 2600 },
+  },
+  {
+    id: 'upright',
+    label: 'Upright',
+    hint: 'Double bass: short, dark, a thump of body under it. Walk with this one.',
+    program: 32,
+    gain: 1.15,
+    env: { attack: 0.01, decay: 0.26, sustain: 0.1, release: 0.14 },
+    filter: { type: 'lowpass', from: 1400, to: 380, time: 0.14, q: 1 },
+    partials: [
+      { type: 'triangle', level: 1 },
+      { type: 'sine', ratio: 2, level: 0.22, decay: 0.12 },
+      { type: 'sawtooth', level: 0.18, decay: 0.05 },
+    ],
+    noise: { level: 0.16, decay: 0.02, type: 'bandpass', frequency: 900 },
+  },
+  {
+    id: 'synth',
+    label: 'Synth bass',
+    hint: 'Saw through a filter that closes as the note goes.',
+    program: 38,
+    gain: 0.9,
+    env: { attack: 0.005, decay: 0.3, sustain: 0.5, release: 0.07 },
+    filter: { type: 'lowpass', from: 2600, to: 280, time: 0.13, q: 5 },
+    partials: [
+      { type: 'sawtooth', level: 1 },
+      { type: 'square', ratio: 0.5, level: 0.3 },
+    ],
+  },
+  {
+    id: 'acid',
+    label: 'Acid',
+    hint: 'Squelch. A resonant sweep on every note.',
+    program: 39,
+    gain: 0.8,
+    env: { attack: 0.003, decay: 0.16, sustain: 0.35, release: 0.05 },
+    filter: { type: 'lowpass', from: 3400, to: 200, time: 0.07, q: 12 },
+    partials: [
+      { type: 'sawtooth', level: 1 },
+      { type: 'square', detune: 8, level: 0.25 },
+    ],
+  },
+  {
+    id: 'fm',
+    label: 'FM bass',
+    hint: 'A metallic click over a solid fundamental.',
+    program: 36,
+    gain: 0.95,
+    env: { attack: 0.002, decay: 0.3, sustain: 0.35, release: 0.08 },
+    filter: { type: 'lowpass', from: 2400, to: 700, time: 0.1, q: 0.8 },
+    partials: [
+      { type: 'sine', level: 1, fm: { ratio: 2, index: 320, decay: 0.05 } },
+      { type: 'sine', ratio: 3, level: 0.14, decay: 0.04 },
+    ],
+  },
+];
+
 /** Voices for the chords underneath. */
 export const HARMONY_INSTRUMENTS = [
   {
@@ -385,6 +489,10 @@ export function harmonyInstrument(id) {
   return byId(HARMONY_INSTRUMENTS, id) || HARMONY_INSTRUMENTS[0];
 }
 
+export function bassInstrument(id) {
+  return byId(BASS_INSTRUMENTS, id) || BASS_INSTRUMENTS[0];
+}
+
 export function drumKit(id) {
   return byId(DRUM_KITS, id) || DRUM_KITS[0];
 }
@@ -407,23 +515,28 @@ export function resolveHarmony(choice, seed) {
   return resolve(HARMONY_INSTRUMENTS, choice, seed, 'harmony');
 }
 
+export function resolveBass(choice, seed) {
+  return resolve(BASS_INSTRUMENTS, choice, seed, 'bass');
+}
+
 export function resolveKit(choice, seed) {
   return resolve(DRUM_KITS, choice, seed, 'kit');
 }
 
 /**
- * The three concrete voices a piece of music is played with. Sections keep the
+ * The four concrete voices a piece of music is played with. Sections keep the
  * choice rather than the result, so an `auto` section re-derives its sound from
  * its own seeds — which is what makes every rolled section a new colour.
  *
  * @param {object} music state.music, or a section's copy of it
  * @param {object} [rhythm] state.rhythm, or a section's copy of it
- * @returns {{lead: string, harmony: string, kit: string}}
+ * @returns {{lead: string, harmony: string, bass: string, kit: string}}
  */
 export function resolveInstruments(music = {}, rhythm = {}) {
   return {
     lead: resolveLead(music.leadInstrument, music.melodySeed),
     harmony: resolveHarmony(music.harmonyInstrument, music.chordSeed),
+    bass: resolveBass(music.bassInstrument, music.bassSeed),
     kit: resolveKit(rhythm?.kit, rhythm?.seed),
   };
 }

@@ -83,6 +83,8 @@ export function sectionSong(section) {
     chordVoicings: music.voicings || [],
     stepsPerChord: music.stepsPerChord || 16,
     melody: music.melody || [],
+    // The bass is optional, and a section saved before it existed has none.
+    bass: music.bassOn === false ? [] : (music.bass || []),
     rhythm: section?.rhythm?.pattern || null,
     // A section stores the *choice* of instrument, not the result, so one left
     // on "from the seed" re-derives its own voices from its own seeds — which

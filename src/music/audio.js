@@ -9,7 +9,7 @@
 
 import { arrange } from './arrange.js';
 import { stepTime } from './rhythm.js';
-import { drumKit, harmonyInstrument, leadInstrument } from './instruments.js';
+import { bassInstrument, drumKit, harmonyInstrument, leadInstrument } from './instruments.js';
 
 /**
  * How each kit piece is made. `kind` picks the renderer:
@@ -54,7 +54,9 @@ export class AudioEngine {
     this.voices = [];
     // What a one-off preview should sound like. Playback carries its own
     // instruments per note, but a click on a chord card has no note to ask.
-    this.instruments = { lead: 'saw', harmony: 'pad', kit: 'studio' };
+    this.instruments = {
+      lead: 'saw', harmony: 'pad', bass: 'finger', kit: 'studio',
+    };
   }
 
   /** Browsers only allow this after a user gesture, so call it from a click. */
@@ -110,11 +112,12 @@ export class AudioEngine {
    * @param {number[][]} [song.chordVoicings]
    * @param {number} [song.stepsPerChord]
    * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.melody]
+   * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.bass]
    * @param {{tracks: Array<{id:string, pattern:boolean[], velocities:number[]}>}} [song.rhythm]
-   * @param {{lead?:string, harmony?:string, kit?:string}} [song.instruments]
+   * @param {{lead?:string, harmony?:string, bass?:string, kit?:string}} [song.instruments]
    * @param {number} [song.totalSteps]
    * @param {boolean} [song.loop]
-   * @param {{chords?:boolean, melody?:boolean, drums?:boolean}} [song.parts]
+   * @param {{chords?:boolean, melody?:boolean, bass?:boolean, drums?:boolean}} [song.parts]
    */
   play(song) {
     this.stop();
@@ -124,12 +127,16 @@ export class AudioEngine {
       tempo = 100,
       swing = 0,
       loop = true,
-      parts = { chords: true, melody: true, drums: true },
+      parts = {
+        chords: true, melody: true, bass: true, drums: true,
+      },
       instruments = this.instruments,
     } = song;
 
     // Shorter parts repeat to fill the loop — see arrange().
-    const { totalSteps, chords, melody, drums } = arrange(song);
+    const {
+      totalSteps, chords, melody, bass, drums,
+    } = arrange(song);
     const secondsPerStep = 60 / tempo / 4;
 
     this.secondsPerStep = secondsPerStep;
@@ -158,6 +165,19 @@ export class AudioEngine {
             at + stepTime(note.step, secondsPerStep, swing),
             Math.max(0.08, note.length * secondsPerStep * 0.92),
             ((note.velocity ?? 96) / 127) * 0.28,
+          );
+        }
+      }
+      if (parts.bass) {
+        for (const note of bass) {
+          // Low notes carry further than high ones, so the bass is mixed a
+          // little under the melody rather than level with it.
+          this.voice(
+            bassInstrument(note.instrument || instruments.bass),
+            note.midi,
+            at + stepTime(note.step, secondsPerStep, swing),
+            Math.max(0.08, note.length * secondsPerStep * 0.94),
+            ((note.velocity ?? 100) / 127) * 0.26,
           );
         }
       }

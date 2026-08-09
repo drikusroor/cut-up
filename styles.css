@@ -13,6 +13,7 @@
   --accent-soft: #f0a58e;
   --line: #33322a;
   --ok: #7fbf6a;
+  --bass: #5b8dd6;
   --radius: 6px;
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -315,6 +316,7 @@ details[open] summary { margin-bottom: 0.5rem; }
   background: var(--accent);
 }
 .swatch.edited { background: var(--ok); }
+.swatch.bass { background: var(--bass); }
 
 /* ---------- sections & song ---------- */
 

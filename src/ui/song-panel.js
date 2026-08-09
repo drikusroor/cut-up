@@ -15,6 +15,7 @@ import {
 import { chordSymbol, keyUsesFlats, noteName } from '../music/theory.js';
 import { melodyEditCount } from '../music/melody.js';
 import {
+  bassInstrument,
   drumKit,
   harmonyInstrument,
   leadInstrument,
@@ -64,10 +65,12 @@ export function initSong(ctx, panels) {
       bars: bars(sectionSteps(section)),
       notes: (music.melody || []).length,
       edits: melodyEditCount(music.melodyEdits),
+      bass: music.bassOn === false ? 0 : (music.bass || []).length,
       // Sections carry their own voices, so the shelf has to say which.
       voices: [
         leadInstrument(sound.lead).label,
         harmonyInstrument(sound.harmony).label,
+        ...(music.bassOn === false ? [] : [bassInstrument(sound.bass).label]),
         drumKit(sound.kit).label,
       ].join(' · '),
     };
@@ -208,7 +211,7 @@ export function initSong(ctx, panels) {
           el('span', { class: 'section-name', text: section.name }),
           el('span', { class: 'section-kind', text: kindLabel(section.kind) }),
         ]),
-        el('div', { class: 'section-meta', text: `${info.key} · ${info.bars} bars · ${info.notes} notes${info.edits ? ` · ${info.edits} hand-edited` : ''}` }),
+        el('div', { class: 'section-meta', text: `${info.key} · ${info.bars} bars · ${info.notes} notes${info.edits ? ` · ${info.edits} hand-edited` : ''}${info.bass ? ` · ${info.bass} on the bass` : ''}` }),
         el('div', { class: 'section-chords', text: info.chords || '—' }),
         el('div', { class: 'section-meta', text: info.voices }),
         el('div', { class: 'section-actions' }, [
