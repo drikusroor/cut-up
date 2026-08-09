@@ -13,8 +13,22 @@ import {
   voiceProgression,
 } from '../src/music/theory.js';
 import { cutUpPattern, euclidean, generateRhythm, stepTime } from '../src/music/rhythm.js';
-import { generateMelody, MELODY_SHAPES, transformMelody } from '../src/music/melody.js';
+import {
+  applyMelodyEdits,
+  emptyMelodyEdits,
+  generateMelody,
+  melodyEditCount,
+  MELODY_SHAPES,
+  transformMelody,
+} from '../src/music/melody.js';
 import { arrange } from '../src/music/arrange.js';
+import {
+  buildSongPlan,
+  forkSection,
+  makeSection,
+  nextSectionName,
+  sectionSteps,
+} from '../src/music/sections.js';
 import { buildMidiFile, songToMidi, stepToTicks, writeVarInt } from '../src/music/midi.js';
 
 // --- theory -----------------------------------------------------------------
@@ -229,6 +243,185 @@ test('bar shuffle keeps every note inside the phrase', () => {
   assert.equal(shuffled.length, notes.length);
   for (const note of shuffled) assert.ok(note.step >= 0 && note.step + note.length <= 48);
   assert.deepEqual([...shuffled.map((n) => n.midi)].sort((a, b) => a - b), notes.map((n) => n.midi));
+});
+
+// --- hand edits -------------------------------------------------------------
+
+const editable = () => [
+  { id: 'n0', midi: 60, step: 0, length: 4, velocity: 100 },
+  { id: 'n1', midi: 64, step: 8, length: 4, velocity: 100 },
+  { id: 'n2', midi: 67, step: 16, length: 8, velocity: 100 },
+];
+
+test('every generated note carries a stable id', () => {
+  const notes = generateMelody({
+    rng: makeRng('ids'), chords: parseChords('Am F C G'), rootPc: 9, scaleId: 'minor', density: 0.8,
+  });
+  assert.ok(notes.length > 4);
+  assert.equal(new Set(notes.map((n) => n.id)).size, notes.length);
+  // Transforms reshuffle notes but must not lose track of which is which.
+  for (const transform of ['retrograde', 'invert', 'shuffle', 'octave']) {
+    const out = transformMelody(notes, transform, { rng: makeRng('t'), totalSteps: 64, stepsPerBar: 16 });
+    assert.deepEqual([...out.map((n) => n.id)].sort(), [...notes.map((n) => n.id)].sort(), transform);
+  }
+});
+
+test('an empty ledger leaves the generated melody alone', () => {
+  const base = editable();
+  const out = applyMelodyEdits(base, emptyMelodyEdits(), { totalSteps: 64 });
+  assert.deepEqual(out.map((n) => [n.midi, n.step, n.length]), base.map((n) => [n.midi, n.step, n.length]));
+  assert.equal(out.some((n) => n.edited), false);
+  assert.equal(melodyEditCount(emptyMelodyEdits()), 0);
+});
+
+test('a dragged note moves in pitch and time without touching the base', () => {
+  const base = editable();
+  const edits = { ...emptyMelodyEdits(), moves: { n1: { dMidi: 3, dStep: -4 } } };
+  const out = applyMelodyEdits(base, edits, { totalSteps: 64 });
+  const moved = out.find((n) => n.id === 'n1');
+  assert.equal(moved.midi, 67);
+  assert.equal(moved.step, 4);
+  assert.equal(moved.edited, true);
+  // The generated melody is the record of what the seed produced; edits never
+  // rewrite it, which is what makes "reset to generated" possible.
+  assert.deepEqual(base, editable());
+  assert.deepEqual(applyMelodyEdits(base, emptyMelodyEdits(), { totalSteps: 64 }).map((n) => n.midi), [60, 64, 67]);
+});
+
+test('hand edits stay inside the grid and the playable range', () => {
+  const base = editable();
+  const out = applyMelodyEdits(base, {
+    moves: {
+      n0: { dMidi: -900, dStep: -50 },
+      n2: { dMidi: 900, dStep: 500, dLength: 400 },
+    },
+  }, { totalSteps: 64, range: [21, 108] });
+  const [low, high] = [out.find((n) => n.id === 'n0'), out.find((n) => n.id === 'n2')];
+  assert.equal(low.midi, 21);
+  assert.equal(low.step, 0);
+  assert.equal(high.midi, 108);
+  assert.ok(high.step + high.length <= 64, 'a note dragged off the end gets clipped');
+});
+
+test('notes can be struck out and drawn in, and the ledger counts both', () => {
+  const edits = {
+    moves: { n0: { dMidi: 2 } },
+    removed: ['n1'],
+    added: [{ id: 'add1', midi: 72, step: 32, length: 2, velocity: 90 }],
+  };
+  const out = applyMelodyEdits(editable(), edits, { totalSteps: 64 });
+  assert.deepEqual(out.map((n) => n.id), ['n0', 'n2', 'add1']);
+  assert.equal(out.find((n) => n.id === 'add1').edited, true);
+  assert.equal(melodyEditCount(edits), 3);
+});
+
+test('hand edits survive a transform, because the notes keep their ids', () => {
+  const base = editable();
+  const edits = { ...emptyMelodyEdits(), moves: { n2: { dMidi: -12 } } };
+  const flipped = transformMelody(base, 'retrograde', { totalSteps: 24 });
+  const out = applyMelodyEdits(flipped, edits, { totalSteps: 24 });
+  const moved = out.find((n) => n.id === 'n2');
+  assert.equal(moved.midi, 55, 'the octave drop follows the note through the retrograde');
+  assert.equal(moved.step, 0, 'and it lands where the transform put it');
+});
+
+// --- sections ---------------------------------------------------------------
+
+function testSection(name, chordText, { kind = 'main', melody = [], stepsPerChord = 16 } = {}) {
+  const chords = parseChords(chordText);
+  return makeSection({
+    name,
+    kind,
+    music: {
+      chords, voicings: voiceProgression(chords, { octave: 3 }), stepsPerChord, melody,
+    },
+    rhythm: { pattern: null },
+  });
+}
+
+test('sections are named the way a lyric sheet names them', () => {
+  const sections = [];
+  const a = { name: nextSectionName(sections, 'main') };
+  sections.push(a);
+  const b = { name: nextSectionName(sections, 'main') };
+  sections.push(b);
+  assert.deepEqual([a.name, b.name], ['A', 'B']);
+  assert.equal(nextSectionName(sections, 'intro'), 'Intro');
+  assert.equal(nextSectionName([...sections, { name: 'Intro' }], 'intro'), 'Intro 2');
+});
+
+test('a fork is an independent copy under a new name', () => {
+  const a = testSection('A', 'Am F C G');
+  const copy = forkSection(a, [a]);
+  assert.notEqual(copy.id, a.id);
+  assert.equal(copy.name, 'B');
+  copy.music.chords.pop();
+  assert.equal(a.music.chords.length, 4, 'editing the fork must not reach back into the original');
+});
+
+test('a section knows how long it runs', () => {
+  assert.equal(sectionSteps(testSection('A', 'Am F C G')), 64);
+  assert.equal(sectionSteps(testSection('B', 'Am F', { stepsPerChord: 32 })), 64);
+});
+
+test('a song plan lays sections end to end with their repeats', () => {
+  const intro = testSection('Intro', 'Am F', { kind: 'intro' });
+  const a = testSection('A', 'Am F C G');
+  const { blocks, totalSteps } = buildSongPlan(
+    [intro, a],
+    [{ sectionId: intro.id, repeats: 1 }, { sectionId: a.id, repeats: 2 }],
+  );
+  assert.deepEqual(blocks.map((b) => [b.name, b.start, b.length]), [
+    ['Intro', 0, 32],
+    ['A', 32, 128],
+  ]);
+  assert.equal(totalSteps, 160);
+});
+
+test('an arrangement entry whose section is gone is skipped, not fatal', () => {
+  const a = testSection('A', 'Am F C G');
+  const { blocks, totalSteps } = buildSongPlan([a], [
+    { sectionId: 'deleted-long-ago' }, { sectionId: a.id },
+  ]);
+  assert.equal(blocks.length, 1);
+  assert.equal(totalSteps, 64);
+});
+
+test('arranging a song concatenates its sections instead of looping one', () => {
+  const intro = testSection('Intro', 'Am F', { kind: 'intro', melody: [{ midi: 72, step: 0, length: 4 }] });
+  const a = testSection('A', 'C G', { melody: [{ midi: 60, step: 0, length: 4 }] });
+  const plan = buildSongPlan([intro, a], [
+    { sectionId: intro.id, repeats: 1 },
+    { sectionId: a.id, repeats: 2 },
+    { sectionId: intro.id, repeats: 1 },
+  ]);
+  const laid = arrange({ sections: plan.blocks.map((b) => b.song) });
+
+  assert.equal(laid.totalSteps, 32 + 64 + 32);
+  // The intro's chords come back at the end, and A's twice in the middle.
+  assert.deepEqual(laid.chords.map((c) => c.step), [0, 16, 32, 48, 64, 80, 96, 112]);
+  // The melody rides on its own section's progression, so A's single note comes
+  // round once per repeat — at the top of each pass, not once per chord.
+  assert.deepEqual(laid.melody.map((n) => [n.midi, n.step]), [
+    [72, 0], [60, 32], [60, 64], [72, 96],
+  ]);
+});
+
+test('muting a part does not shorten the section it was in', () => {
+  const a = testSection('A', 'Am F C G');
+  const [block] = buildSongPlan([a], [{ sectionId: a.id }]).blocks;
+  const silent = arrange({ sections: [{ ...block.song, chordVoicings: [], melody: [] }] });
+  assert.equal(silent.totalSteps, 64, 'the block keeps the length you heard');
+});
+
+test('a section carries its own kit, so the drums change with the section', () => {
+  const a = testSection('A', 'Am F');
+  a.rhythm = { pattern: generateRhythm({ rng: makeRng('r'), steps: 16, bars: 1, trackIds: ['kick'] }) };
+  const b = testSection('B', 'C G');
+  const plan = buildSongPlan([a, b], [{ sectionId: a.id }, { sectionId: b.id }]);
+  const { drums } = arrange({ sections: plan.blocks.map((x) => x.song) });
+  assert.ok(drums.length, 'A has a kick pattern');
+  assert.equal(drums.every((hit) => hit.step < 32), true, 'and B, which has none, stays dry');
 });
 
 // --- midi -------------------------------------------------------------------

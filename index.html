@@ -22,6 +22,7 @@
     <button class="tab is-active" role="tab" aria-selected="true" data-tab="words">Words</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="chords">Chords &amp; melody</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="rhythm">Rhythm</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="song">Song</button>
   </nav>
 </header>
 
@@ -236,14 +237,28 @@
         <button type="button" class="btn primary" id="gen-chords">✂ New progression</button>
         <button type="button" class="btn" id="gen-melody">New melody</button>
         <div class="spacer"></div>
+        <button type="button" class="btn" id="save-section-quick" title="Put this idea in the section drawer">＋ Save as section</button>
         <button type="button" class="btn ghost" id="copy-chords">Copy chords</button>
       </div>
 
       <div class="chord-strip" id="chords-out" aria-live="polite"></div>
 
-      <h3 class="section-label">Melody</h3>
+      <div class="output-head">
+        <h3 class="section-label">Melody</h3>
+        <div class="spacer"></div>
+        <small id="melody-edit-status" class="hint"></small>
+        <button type="button" class="btn ghost" id="undo-melody-edit" title="Undo the last hand edit (Ctrl+Z)" disabled>↶ Undo</button>
+        <button type="button" class="btn ghost" id="reset-melody-edits" title="Throw away every hand edit and go back to the generated line" disabled>Reset to generated</button>
+      </div>
       <canvas id="piano-roll" class="piano-roll" height="260"></canvas>
-      <small class="hint">Notes are laid out over the progression. Grey lines are bars; the highlighted row is the key's root.</small>
+      <small class="hint">
+        <strong>Drag a note</strong> up and down to change its pitch, left and right to move it in time;
+        drag its right-hand edge to make it longer or shorter. <strong>Double-click</strong> empty space to
+        add a note, <strong>alt-click</strong> or right-click one to remove it.
+        Hand edits are kept as deviations from the generated line: they show up
+        <span class="swatch edited"></span> green over the dashed ghost of where the note started, and
+        “Reset to generated” gives you the original back. Grey lines are bars; the highlighted row is the key's root.
+      </small>
     </div>
   </div>
 </section>
@@ -307,6 +322,57 @@
   </div>
 </section>
 
+<!-- ======================= SONG ======================= -->
+<section class="panel" id="panel-song" role="tabpanel" aria-label="Song" hidden>
+  <div class="layout">
+
+    <div class="controls">
+      <fieldset>
+        <legend>What you have open</legend>
+        <p class="hint" id="current-section-status"></p>
+        <div class="row">
+          <label class="field grow"><span>Name</span><input type="text" id="section-name" placeholder="A"></label>
+          <label class="field grow"><span>Role</span><select id="section-kind"></select></label>
+        </div>
+        <small id="section-kind-hint" class="hint"></small>
+        <div class="row wrap">
+          <button type="button" class="btn primary" id="save-section">＋ Save as section</button>
+          <button type="button" class="btn" id="update-section" disabled>Update</button>
+          <button type="button" class="btn" id="fork-section" disabled title="Copy it into a new section and roll a new melody over the same chords">Fork a variation</button>
+        </div>
+        <small class="hint">
+          A section freezes the whole idea — key, chords, melody, your hand edits, the drum pattern and
+          every seed. Save one, then carry on working: the drawer keeps the old one.
+        </small>
+      </fieldset>
+
+      <fieldset>
+        <legend>Song</legend>
+        <div class="row wrap">
+          <button type="button" class="btn" id="play-song">▶ Play the song</button>
+          <button type="button" class="btn ghost" id="export-song-midi">⤓ Export song MIDI</button>
+        </div>
+        <div class="row wrap">
+          <button type="button" class="btn ghost" id="autofill-song" title="Intro, every section in order, outro">Auto-arrange</button>
+          <button type="button" class="btn ghost" id="clear-song">Clear</button>
+        </div>
+        <small class="hint">
+          Tempo, swing and which parts sound stay global — they live in the transport at the bottom.
+        </small>
+      </fieldset>
+    </div>
+
+    <div class="output">
+      <h3 class="section-label">Sections</h3>
+      <div class="section-shelf" id="sections-out" aria-live="polite"></div>
+
+      <h3 class="section-label">Arrangement</h3>
+      <div class="arrangement" id="arrangement-out"></div>
+      <small class="hint" id="song-summary"></small>
+    </div>
+  </div>
+</section>
+
 </main>
 
 <!-- ======================= TRANSPORT ======================= -->
@@ -324,6 +390,7 @@
     <label class="check"><input type="checkbox" id="part-drums" checked> Drums</label>
   </div>
   <div class="spacer"></div>
+  <small class="hint" id="play-scope"></small>
   <button type="button" class="btn ghost" id="export-midi">⤓ Export MIDI</button>
 </div>
 

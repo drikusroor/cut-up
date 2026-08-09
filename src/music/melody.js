@@ -11,7 +11,11 @@ import { scalePitchClasses } from './theory.js';
  * @property {number} step   start, in grid steps from the top of the phrase
  * @property {number} length duration in steps
  * @property {number} velocity 1-127
+ * @property {string} [id]   stable across transforms, so hand edits stick to a note
  */
+
+/** How far a hand-dragged note is allowed to roam: the range of a piano. */
+export const EDIT_RANGE = [21, 108];
 
 export const MELODY_SHAPES = [
   { id: 'wander', label: 'Wander', hint: 'Mostly steps, the occasional leap.' },
@@ -85,6 +89,9 @@ export function generateMelody(opts) {
       ]);
 
       notes.push({
+        // The id travels with the note through every transform, so a note you
+        // dragged by hand is still the same note after a retrograde.
+        id: `n${notes.length}`,
         midi: current,
         step: absolute,
         length: Math.min(length, stepsPerChord - step),
@@ -217,4 +224,85 @@ function clampMidi(midi, [low, high]) {
   while (out < low) out += 12;
   while (out > high) out -= 12;
   return Math.min(127, Math.max(0, out));
+}
+
+// --- Hand edits -------------------------------------------------------------
+//
+// Dragging a note in the piano roll never rewrites the generated melody. What
+// the generator (plus any transforms) produced stays put as the *base*, and
+// every hand edit is filed as a deviation from it: a delta on a note, a note
+// struck out, a note added. The melody you hear is the base with the ledger
+// laid over it, so "reset" is just throwing the ledger away, and the same seed
+// still gives back the same starting point underneath your changes.
+
+/**
+ * @typedef {object} MelodyEdits
+ * @property {Record<string, {dMidi?: number, dStep?: number, dLength?: number}>} moves
+ * @property {string[]} removed  ids struck out by hand
+ * @property {Note[]} added      notes drawn in by hand, with their own ids
+ */
+
+/** @returns {MelodyEdits} */
+export function emptyMelodyEdits() {
+  return { moves: {}, removed: [], added: [] };
+}
+
+/** How many notes the ledger touches — what the "reset" button counts. */
+export function melodyEditCount(edits) {
+  const { moves = {}, removed = [], added = [] } = edits || {};
+  return new Set([
+    ...Object.keys(moves),
+    ...removed,
+    ...added.map((note) => note.id),
+  ]).size;
+}
+
+/** True when a delta is really no delta, so it can be dropped from the ledger. */
+export function isNullMove(move) {
+  return !move || (!move.dMidi && !move.dStep && !move.dLength);
+}
+
+/**
+ * Lays a ledger of hand edits over a generated melody.
+ *
+ * @param {Note[]} base   what the generator (and any transforms) produced
+ * @param {MelodyEdits} edits
+ * @param {{totalSteps?: number, range?: [number, number]}} [opts]
+ * @returns {Note[]} sorted by step, each edited note flagged `edited`
+ */
+export function applyMelodyEdits(base = [], edits = {}, opts = {}) {
+  const { moves = {}, removed = [], added = [] } = edits || {};
+  const { totalSteps = 0, range = EDIT_RANGE } = opts;
+  const [low, high] = range;
+  const gone = new Set(removed);
+  const addedIds = new Set(added.map((note) => note.id));
+  const out = [];
+
+  for (const note of [...base, ...added]) {
+    if (!note || gone.has(note.id)) continue;
+    const move = moves[note.id];
+    const edited = addedIds.has(note.id) || !isNullMove(move);
+    if (!move) {
+      out.push(edited ? { ...note, edited } : { ...note });
+      continue;
+    }
+    // Position first, then length: dragging the right-hand edge should trim the
+    // note rather than shunt its start backwards.
+    const lastStep = totalSteps > 0 ? totalSteps - 1 : Infinity;
+    const step = clamp(Math.round(note.step + (move.dStep || 0)), 0, lastStep);
+    const room = totalSteps > 0 ? totalSteps - step : Infinity;
+    out.push({
+      ...note,
+      midi: clamp(Math.round(note.midi + (move.dMidi || 0)), low, high),
+      step,
+      length: clamp(Math.round(note.length + (move.dLength || 0)), 1, Math.max(1, room)),
+      edited,
+    });
+  }
+
+  return out.sort((a, b) => a.step - b.step || a.midi - b.midi);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }

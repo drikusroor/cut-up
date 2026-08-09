@@ -91,6 +91,57 @@ arch, descend, leaps), how busy it is, how strongly it sticks to chord tones,
 how often it rests, and its range. Then you can cut *that* up too: retrograde,
 inversion, bar shuffle, octave jumps.
 
+### Reshaping the melody by hand
+
+The piano roll is editable. Drag a note up and down to change its pitch, left
+and right to move it in time, or drag its right-hand edge to make it longer or
+shorter. Double-click empty space to add a note; alt-click or right-click one to
+take it out.
+
+None of that overwrites what the generator produced. The generated line stays
+underneath as the *base*, and every edit you make is filed as a deviation from
+it — a delta on a note, a note struck out, a note drawn in. So:
+
+- Edited notes are drawn <span>🟢</span> green, over a dashed ghost of where the
+  note started, and you can see at a glance how far you have pulled the line
+  away from the machine's version.
+- **Undo** (or Ctrl+Z) steps back through your edits, and **Reset to generated**
+  throws the whole ledger away and gives you the original line back.
+- Transforms are the machine's move, so they rewrite the base — and because
+  notes keep their identity through a retrograde or a bar shuffle, the notes you
+  dragged stay dragged.
+- Rerolling the melody starts you clean: a new line is a new set of notes, and
+  deltas aimed at the old ones would land on strangers.
+
+## Song
+
+A loop is not a song. The **Song** tab keeps a drawer of *sections* and the
+running order you build out of them.
+
+**Save as section** freezes everything the Chords and Rhythm tabs are showing —
+key, progression, melody, your hand edits, the drum pattern, and every seed —
+under a name. Body sections are named A, B, C as you go; intros, middle eights
+and outros take their role as a name. Then carry on working: the drawer keeps
+the old one.
+
+Each saved section can be:
+
+| | |
+| --- | --- |
+| **＋ Song** | Drop it into the running order. |
+| **Edit** | Open it back up in the other tabs, exactly as you left it. |
+| **Fork** | Copy it into a new section, so you can take a variation somewhere else without losing the original. **Fork a variation** does the same and rolls a new melody over the same chords — the quick way to get a B out of an A. |
+
+The running order is a row of chips: reorder them with ‹ ›, set how many times
+each one repeats, and drop them out again with ✕. **Auto-arrange** lays out
+everything you have saved in the obvious order — intro, sections, middle eight,
+outro. A song is therefore an optional intro, one or more sections, and an
+optional outro, with anything in between you care to put there.
+
+Sections carry their own key, chords, melody and drum pattern, so the kit and
+the harmony really do change with the section. Tempo, swing and which parts
+sound stay global — they live in the transport.
+
 ## Rhythm
 
 A step sequencer with four generators: **euclidean** (pulses spread as evenly as
@@ -108,7 +159,9 @@ button rolls a fresh seed for that part alone — a new progression under the
 same melody idea, or a new melody over chords you want to keep.
 
 Melody transforms, rhythm cut-ups and hand-edited steps are changes made *on
-top* of what the seed produced, so they are not replayed by it.
+top* of what the seed produced, so they are not replayed by it — and a saved
+section keeps all of them, seeds included, so it always plays back the way you
+left it.
 
 ## Playing and exporting
 
@@ -118,18 +171,23 @@ fill it, so a two-bar drum pattern keeps playing under a four-bar progression.
 Space bar toggles playback. Everything is synthesised with the Web Audio API —
 no samples, no libraries.
 
+Play follows the tab you are on: on Chords or Rhythm it loops the idea in front
+of you, and on the Song tab it plays the arrangement from the top, section by
+section. The readout next to Export MIDI tells you which.
+
 **Export MIDI** writes a type-1 file with chords, melody and drums on separate
-tracks (drums on channel 10), swing baked in, ready to drag into any DAW.
+tracks (drums on channel 10), swing baked in, ready to drag into any DAW — the
+loop, or the whole song if that is what you are playing.
 
 ## Development
 
 ```sh
-npm test                        # 43 unit tests, no dependencies
+npm test                        # 57 unit tests, no dependencies
 node tools/build-wordlists.mjs  # regenerate data/words.*.json
 ```
 
 ```
-index.html          markup for all three tabs
+index.html          markup for all four tabs
 styles.css
 src/
   rng.js            seeded randomness — every generator runs off this
@@ -139,9 +197,10 @@ src/
   sources.js        built-in seed texts
   music/
     theory.js       scales, chords, progressions, voicing, chord parsing
-    melody.js       melody generation and cut-up transforms
+    melody.js       melody generation, cut-up transforms, the hand-edit ledger
     rhythm.js       euclidean and friends
-    arrange.js      lays the parts out over the loop, repeats included
+    sections.js     saved sections and the running order built from them
+    arrange.js      lays the parts out over the loop, or sections end to end
     midi.js         a small type-1 MIDI writer
     audio.js        Web Audio playback
   ui/               one module per tab, plus DOM helpers

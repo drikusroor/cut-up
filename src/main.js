@@ -4,8 +4,11 @@ import { $, $$, download, toast } from './ui/dom.js';
 import { initWords } from './ui/words-panel.js';
 import { initChords } from './ui/chords-panel.js';
 import { initRhythm } from './ui/rhythm-panel.js';
+import { initSong } from './ui/song-panel.js';
 import { AudioEngine } from './music/audio.js';
 import { songToMidi } from './music/midi.js';
+import { buildSongPlan } from './music/sections.js';
+import { emptyMelodyEdits } from './music/melody.js';
 import { randomSeed } from './rng.js';
 
 const STORAGE_KEY = 'cut-up:v1';
@@ -52,6 +55,10 @@ function defaultState() {
       locked: [],
       chordSeed: '',
       melodySeed: '',
+      // What the generator produced, the deviations you dragged into it, and
+      // the two laid over each other — which is the melody that gets played.
+      melodyBase: [],
+      melodyEdits: emptyMelodyEdits(),
       melody: [],
       melodyShape: 'wander',
       density: 0.45,
@@ -70,6 +77,10 @@ function defaultState() {
       seed: '',
       pattern: null,
     },
+    // Saved ideas, and the running order built out of them.
+    sections: [],
+    arrangement: [], // [{ sectionId, repeats }]
+    currentSectionId: null,
   };
 }
 
@@ -78,14 +89,23 @@ function loadState() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (!stored) return base;
-    return {
+    const state = {
       ...base,
       ...stored,
       parts: { ...base.parts, ...(stored.parts || {}) },
       words: { ...base.words, ...(stored.words || {}) },
       music: { ...base.music, ...(stored.music || {}) },
       rhythm: { ...base.rhythm, ...(stored.rhythm || {}) },
+      sections: Array.isArray(stored.sections) ? stored.sections : [],
+      arrangement: Array.isArray(stored.arrangement) ? stored.arrangement : [],
     };
+    // A melody saved before hand edits existed becomes its own base, so the
+    // line you left behind is still there and is now draggable.
+    if (!state.music.melodyBase?.length && state.music.melody?.length) {
+      state.music.melodyBase = state.music.melody.map((note, i) => ({ id: `n${i}`, ...note }));
+      state.music.melodyEdits = emptyMelodyEdits();
+    }
+    return state;
   } catch {
     return base;
   }
@@ -113,6 +133,7 @@ const ctx = { state, save, audio };
 initWords(ctx);
 const chordsPanel = initChords(ctx);
 const rhythmPanel = initRhythm(ctx);
+const songPanel = initSong(ctx, { chords: chordsPanel, rhythm: rhythmPanel });
 
 // --- tabs -------------------------------------------------------------------
 
@@ -128,6 +149,8 @@ function showTab(name) {
   }
   $('#transport').hidden = name === 'words';
   if (name === 'chords') chordsPanel.redraw();
+  if (name === 'song') songPanel.render();
+  renderPlayScope();
   save();
 }
 
@@ -169,53 +192,98 @@ for (const part of ['chords', 'melody', 'drums']) {
   });
 }
 
-/** Everything the audio engine and the MIDI writer both need. */
-function buildSong() {
+/** The loop the Chords and Rhythm tabs are working on. */
+function buildLoop() {
   const m = state.music;
   const totalChordSteps = m.chords.length * m.stepsPerChord;
   const drumSteps = state.rhythm.pattern?.tracks?.[0]?.pattern.length ?? 0;
   const melodySteps = m.melody.reduce((max, n) => Math.max(max, n.step + n.length), 0);
   return {
-    tempo: state.tempo,
-    swing: state.swing,
     chordVoicings: m.voicings,
     stepsPerChord: m.stepsPerChord,
     melody: m.melody,
     rhythm: state.rhythm.pattern,
     // Loop over whichever part is longest; the shorter ones repeat to fill it.
     totalSteps: Math.max(totalChordSteps, drumSteps, melodySteps, 16),
-    parts: state.parts,
-    loop: true,
   };
 }
 
-function startPlayback() {
-  audio.play(buildSong());
+/** The whole arrangement, section by section — null when there isn't one. */
+function buildArrangedSong() {
+  const plan = buildSongPlan(state.sections, state.arrangement);
+  if (!plan.blocks.length) return null;
+  return { sections: plan.blocks.map((block) => block.song), totalSteps: plan.totalSteps };
 }
 
-$('#play').addEventListener('click', startPlayback);
-$('#stop').addEventListener('click', () => audio.stop());
+/**
+ * Whichever of the two the Song tab is asking for. The transport follows the
+ * tab you are on, so play means the same thing as whatever is in front of you.
+ */
+function buildSong({ scope = state.tab === 'song' ? 'song' : 'loop' } = {}) {
+  const song = (scope === 'song' && buildArrangedSong()) || buildLoop();
+  return {
+    ...song, tempo: state.tempo, swing: state.swing, parts: state.parts, loop: true,
+  };
+}
 
-$('#export-midi').addEventListener('click', () => {
-  const song = buildSong();
-  const hasSomething = (state.parts.chords && song.chordVoicings.length)
-    || (state.parts.melody && song.melody.length)
-    || (state.parts.drums && song.rhythm?.tracks?.length);
-  if (!hasSomething) return toast('Nothing to export yet');
+/** Strips out the parts you have muted, sections and all. */
+function applyParts(song, parts) {
+  if (song.sections) {
+    return { ...song, sections: song.sections.map((section) => applyParts(section, parts)) };
+  }
+  return {
+    ...song,
+    chordVoicings: parts.chords ? (song.chordVoicings || []) : [],
+    melody: parts.melody ? (song.melody || []) : [],
+    rhythm: parts.drums ? (song.rhythm || null) : null,
+  };
+}
 
-  const midi = songToMidi({
-    tempo: song.tempo,
-    swing: song.swing,
-    chordVoicings: state.parts.chords ? song.chordVoicings : [],
-    stepsPerChord: song.stepsPerChord,
-    melody: state.parts.melody ? song.melody : [],
-    rhythm: state.parts.drums ? song.rhythm : null,
-    // Keep the exported loop the length you heard, muted parts included.
-    totalSteps: song.totalSteps,
-  });
-  download(`cut-up-${state.music.chordSeed || 'idea'}.mid`, midi, 'audio/midi');
+/** True when there is a single note anywhere in an unmuted part. */
+function hasAudibleContent(song) {
+  if (song.sections) return song.sections.some(hasAudibleContent);
+  return Boolean(song.chordVoicings?.length || song.melody?.length || song.rhythm?.tracks?.length);
+}
+
+let playbackScope = 'loop';
+
+function startPlayback(options) {
+  playbackScope = options?.scope || (state.tab === 'song' ? 'song' : 'loop');
+  audio.play(buildSong({ scope: playbackScope }));
+}
+
+function exportMidi(options) {
+  const scope = options?.scope || (state.tab === 'song' ? 'song' : 'loop');
+  // Muted parts are dropped, but each block keeps the length you heard.
+  const song = applyParts(buildSong({ scope }), state.parts);
+  if (!hasAudibleContent(song)) return toast('Nothing to export yet');
+  const name = scope === 'song' ? 'song' : (state.music.chordSeed || 'idea');
+  download(`cut-up-${name}.mid`, songToMidi(song), 'audio/midi');
   return undefined;
-});
+}
+
+function renderPlayScope() {
+  const scope = $('#play-scope');
+  if (state.tab !== 'song') {
+    scope.textContent = 'Looping what you have open';
+    return;
+  }
+  const plan = buildSongPlan(state.sections, state.arrangement);
+  scope.textContent = plan.blocks.length
+    ? `Playing the song — ${Math.max(1, Math.round(plan.totalSteps / 16))} bars`
+    : 'No arrangement yet — looping what you have open';
+}
+
+ctx.playSong = () => startPlayback({ scope: 'song' });
+ctx.exportSong = () => exportMidi({ scope: 'song' });
+ctx.onSongChange = () => {
+  renderPlayScope();
+  if (audio.playing && playbackScope === 'song') startPlayback({ scope: 'song' });
+};
+
+$('#play').addEventListener('click', () => startPlayback());
+$('#stop').addEventListener('click', () => audio.stop());
+$('#export-midi').addEventListener('click', () => exportMidi());
 
 // Space bar toggles playback, except while typing.
 document.addEventListener('keydown', (event) => {
@@ -234,8 +302,12 @@ function frame() {
   const step = audio.playing ? audio.currentStep : -1;
   if (step !== lastStep) {
     lastStep = step;
-    rhythmPanel.highlight(step);
-    chordsPanel.highlight(step);
+    // While the arrangement is playing, the step means nothing to the chord
+    // cards or the drum grid — they are showing one section, not the song.
+    const inSong = playbackScope === 'song' && step >= 0;
+    rhythmPanel.highlight(inSong ? -1 : step);
+    chordsPanel.highlight(inSong ? -1 : step);
+    songPanel.highlight(inSong ? step : -1);
   }
   requestAnimationFrame(frame);
 }

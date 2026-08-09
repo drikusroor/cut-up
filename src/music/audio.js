@@ -288,6 +288,12 @@ export class AudioEngine {
     const time = this.ctx.currentTime + 0.02;
     voicing.forEach((midi, i) => this.pad(midi, time + i * 0.02, 1.1, 0.18));
   }
+
+  /** Short blip, so dragging a note in the piano roll tells you where you are. */
+  preview(midi) {
+    this.ensure();
+    this.lead(midi, this.ctx.currentTime + 0.01, 0.18, 0.16);
+  }
 }
 
 export function mtof(midi) {

@@ -26,14 +26,23 @@ export function initRhythm(ctx) {
   };
 
   fillSelect(ui.style, RHYTHM_STYLES.map((s) => ({ value: s.id, label: s.label })), r.style);
-  ui.steps.value = r.steps;
-  ui.bars.value = r.bars;
-  // Before anything reads the controls, or the stored seed looks like a blank.
-  ui.seed.value = r.seed;
-  ui.density.value = r.density;
-  ui.variation.value = r.variation;
   bindSlider(ui.density, $('#out-rdensity'), PERCENT);
   bindSlider(ui.variation, $('#out-variation'), PERCENT);
+
+  /** Writes the stored settings back into the controls. */
+  function writeControls() {
+    ui.style.value = r.style;
+    ui.steps.value = String(r.steps);
+    ui.bars.value = r.bars;
+    // Before anything reads the controls, or the stored seed looks like a blank.
+    ui.seed.value = r.seed;
+    ui.density.value = r.density;
+    ui.variation.value = r.variation;
+    for (const input of [ui.density, ui.variation]) input.dispatchEvent(new Event('input'));
+    for (const box of ui.picker.querySelectorAll('input')) {
+      box.checked = r.trackIds.includes(box.value);
+    }
+  }
 
   ui.picker.replaceChildren(
     ...TRACKS.map((track) => el('label', { class: 'check' }, [
@@ -150,14 +159,22 @@ export function initRhythm(ctx) {
     input.addEventListener('change', () => generate({ newSeed: false }));
   }
 
+  writeControls();
   syncStyle();
   if (r.pattern) render();
   else generate({ newSeed: true });
 
   return {
+    /** Re-reads state.rhythm after a section has been loaded over it. */
+    applyState() {
+      writeControls();
+      syncStyle();
+      if (r.pattern) render();
+      else generate({ newSeed: false });
+    },
     highlight(step) {
       const total = r.pattern?.tracks?.[0]?.pattern.length ?? 0;
-      const now = total ? ((step % total) + total) % total : -1;
+      const now = total && step >= 0 ? step % total : -1;
       for (const row of ui.out.children) {
         for (const cell of row.querySelectorAll('.step')) {
           cell.classList.toggle('is-now', Number(cell.dataset.step) === now);

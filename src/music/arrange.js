@@ -4,6 +4,20 @@
 // four-bar progression has to repeat to cover it, the way a looped clip does in
 // a DAW. Playback and MIDI export both go through here, so they cannot disagree
 // about what the song actually is.
+//
+// A song can also be a list of `sections` — intro, A, B, coda — in which case
+// each one is laid out on its own and the results are strung end to end.
+
+/** The natural length of a song in steps: however long its longest part is. */
+export function naturalSteps(song) {
+  const {
+    chordVoicings = [], stepsPerChord = 16, melody = [], rhythm = null,
+  } = song || {};
+  const chordSpan = chordVoicings.length * stepsPerChord;
+  const drumSpan = rhythm?.tracks?.[0]?.pattern.length ?? 0;
+  const melodyEnd = melody.reduce((max, note) => Math.max(max, note.step + note.length), 0);
+  return Math.max(chordSpan, drumSpan, melodyEnd, 16);
+}
 
 /**
  * @param {object} song
@@ -20,6 +34,8 @@
  * }}
  */
 export function arrange(song) {
+  if (Array.isArray(song?.sections) && song.sections.length) return arrangeSections(song);
+
   const {
     chordVoicings = [],
     stepsPerChord = 16,
@@ -73,4 +89,33 @@ export function arrange(song) {
   }
 
   return { totalSteps, chords, melody: melodyOut, drums };
+}
+
+/**
+ * Strings sections end to end, each one repeated as many times as it asks for.
+ * Every section keeps its own progression, melody and kit — the only thing
+ * shared across the song is the transport, so tempo and swing stay global.
+ *
+ * @param {{sections: Array<object & {repeats?: number}>}} song
+ */
+function arrangeSections(song) {
+  const chords = [];
+  const melody = [];
+  const drums = [];
+  let offset = 0;
+
+  for (const section of song.sections) {
+    // A section is an ordinary song, so it goes through the same layout code —
+    // shorter parts inside it still repeat to cover the longest one.
+    const block = arrange({ ...section, sections: undefined });
+    const repeats = Math.max(1, Math.round(section.repeats || 1));
+    for (let pass = 0; pass < repeats; pass++) {
+      for (const chord of block.chords) chords.push({ ...chord, step: chord.step + offset });
+      for (const note of block.melody) melody.push({ ...note, step: note.step + offset });
+      for (const hit of block.drums) drums.push({ ...hit, step: hit.step + offset });
+      offset += block.totalSteps;
+    }
+  }
+
+  return { totalSteps: Math.max(offset, 16), chords, melody, drums };
 }
