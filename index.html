@@ -210,6 +210,25 @@
         </div>
         <div class="row wrap" id="melody-transforms"></div>
       </fieldset>
+
+      <fieldset>
+        <legend>Seeds</legend>
+        <div class="field">
+          <span>Progression</span>
+          <div class="row">
+            <input type="text" id="chord-seed" class="grow" aria-label="Progression seed">
+            <button type="button" class="btn ghost" id="new-chord-seed" title="New random progression seed">🎲</button>
+          </div>
+        </div>
+        <div class="field">
+          <span>Melody</span>
+          <div class="row">
+            <input type="text" id="melody-seed" class="grow" aria-label="Melody seed">
+            <button type="button" class="btn ghost" id="new-melody-seed" title="New random melody seed">🎲</button>
+          </div>
+        </div>
+        <small class="hint">The same seed and settings always give the same result, so write down the ones you like. Transforms and hand edits sit on top of what the seed produced.</small>
+      </fieldset>
     </div>
 
     <div class="output">
@@ -264,6 +283,15 @@
       <fieldset>
         <legend>Kit</legend>
         <div class="checks" id="track-picker"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Seed</legend>
+        <div class="row">
+          <input type="text" id="rhythm-seed" class="grow" aria-label="Rhythm seed">
+          <button type="button" class="btn ghost" id="new-rhythm-seed" title="New random rhythm seed">🎲</button>
+        </div>
+        <small class="hint">The same seed and settings always give the same pattern. Cut-ups and hand edits sit on top of it.</small>
       </fieldset>
     </div>
 

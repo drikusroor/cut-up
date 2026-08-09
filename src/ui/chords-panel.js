@@ -38,6 +38,10 @@ export function initChords(ctx) {
     genChords: $('#gen-chords'),
     genMelody: $('#gen-melody'),
     copy: $('#copy-chords'),
+    chordSeed: $('#chord-seed'),
+    melodySeed: $('#melody-seed'),
+    newChordSeed: $('#new-chord-seed'),
+    newMelodySeed: $('#new-melody-seed'),
   };
 
   const sliders = ['sevenths', 'spice'];
@@ -67,6 +71,9 @@ export function initChords(ctx) {
 
   ui.length.value = m.length;
   ui.barsPerChord.value = m.stepsPerChord;
+  // Before anything reads the controls, or the stored seeds look like blanks.
+  ui.chordSeed.value = m.chordSeed;
+  ui.melodySeed.value = m.melodySeed;
   ui.own.value = m.ownChords;
   for (const id of sliders) $(`#${id}`).value = m[id];
   for (const [id, key] of melodySliders) $(`#${id}`).value = m[key];
@@ -91,6 +98,9 @@ export function initChords(ctx) {
   }
 
   function readControls() {
+    // A seed the user has typed over wins; an empty box means "surprise me".
+    m.chordSeed = ui.chordSeed.value.trim() || randomSeed();
+    m.melodySeed = ui.melodySeed.value.trim() || randomSeed();
     m.rootPc = Number(ui.root.value);
     m.scaleId = ui.scale.value;
     m.mode = ui.mode.value;
@@ -109,7 +119,8 @@ export function initChords(ctx) {
 
   function generateChords({ newSeed = true } = {}) {
     readControls();
-    if (newSeed || !m.chordSeed) m.chordSeed = randomSeed();
+    if (newSeed) m.chordSeed = randomSeed();
+    ui.chordSeed.value = m.chordSeed;
     const rng = makeRng(`chords:${m.chordSeed}`);
 
     const fresh = generateProgression({
@@ -135,14 +146,17 @@ export function initChords(ctx) {
     m.chords = fresh.map((chord, i) => m.locked[i] || chord);
     m.voicings = voiceProgression(m.chords, { octave: 3 });
     renderChords();
-    generateMelodyLine({ newSeed });
+    // The melody keeps its own seed: new chords under the same melody idea is
+    // a thing you want to be able to ask for.
+    generateMelodyLine({ newSeed: false });
     save();
   }
 
   function generateMelodyLine({ newSeed = true } = {}) {
     readControls();
     if (!m.chords.length) return;
-    if (newSeed || !m.melodySeed) m.melodySeed = randomSeed();
+    if (newSeed) m.melodySeed = randomSeed();
+    ui.melodySeed.value = m.melodySeed;
     m.melody = generateMelody({
       rng: makeRng(`melody:${m.melodySeed}`),
       chords: m.chords,
@@ -299,6 +313,12 @@ export function initChords(ctx) {
     $(`#${id}`).addEventListener('change', () => generateMelodyLine({ newSeed: false }));
   }
   ui.own.addEventListener('change', () => generateChords({ newSeed: true }));
+
+  // Typing a seed in replays it; the dice roll a fresh one for that part only.
+  ui.chordSeed.addEventListener('change', () => generateChords({ newSeed: false }));
+  ui.melodySeed.addEventListener('change', () => generateMelodyLine({ newSeed: false }));
+  ui.newChordSeed.addEventListener('click', () => generateChords({ newSeed: true }));
+  ui.newMelodySeed.addEventListener('click', () => generateMelodyLine({ newSeed: true }));
 
   window.addEventListener('resize', () => renderRoll());
 

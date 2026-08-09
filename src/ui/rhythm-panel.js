@@ -21,11 +21,15 @@ export function initRhythm(ctx) {
     out: $('#rhythm-out'),
     generate: $('#gen-rhythm'),
     cutup: $('#cutup-rhythm'),
+    seed: $('#rhythm-seed'),
+    newSeed: $('#new-rhythm-seed'),
   };
 
   fillSelect(ui.style, RHYTHM_STYLES.map((s) => ({ value: s.id, label: s.label })), r.style);
   ui.steps.value = r.steps;
   ui.bars.value = r.bars;
+  // Before anything reads the controls, or the stored seed looks like a blank.
+  ui.seed.value = r.seed;
   ui.density.value = r.density;
   ui.variation.value = r.variation;
   bindSlider(ui.density, $('#out-rdensity'), PERCENT);
@@ -57,6 +61,8 @@ export function initRhythm(ctx) {
   }
 
   function readControls() {
+    // A seed the user has typed over wins; an empty box means "surprise me".
+    r.seed = ui.seed.value.trim() || randomSeed();
     r.style = ui.style.value;
     r.steps = Number(ui.steps.value);
     r.bars = Number(ui.bars.value);
@@ -66,7 +72,8 @@ export function initRhythm(ctx) {
 
   function generate({ newSeed = true } = {}) {
     readControls();
-    if (newSeed || !r.seed) r.seed = randomSeed();
+    if (newSeed) r.seed = randomSeed();
+    ui.seed.value = r.seed;
     r.pattern = generateRhythm({
       rng: makeRng(`rhythm:${r.seed}`),
       steps: r.steps,
@@ -135,6 +142,9 @@ export function initRhythm(ctx) {
 
   ui.generate.addEventListener('click', () => generate({ newSeed: true }));
   ui.cutup.addEventListener('click', cutUp);
+  // Typing a seed in replays it; the dice roll a fresh one.
+  ui.seed.addEventListener('change', () => generate({ newSeed: false }));
+  ui.newSeed.addEventListener('click', () => generate({ newSeed: true }));
   ui.style.addEventListener('change', () => { syncStyle(); generate({ newSeed: false }); });
   for (const input of [ui.steps, ui.bars, ui.density, ui.variation]) {
     input.addEventListener('change', () => generate({ newSeed: false }));

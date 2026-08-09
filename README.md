@@ -61,8 +61,7 @@ Lines you like can be **locked** (🔒 keeps them through a reroll) or **kept**
 (★ files them in the Keepers pad, which persists in your browser). The app also
 suggests a few titles from whatever it just produced.
 
-Everything is seeded: the same seed and settings always give the same cut-up,
-so a line you liked is never lost.
+Everything is seeded — see [Seeds](#seeds) — so a line you liked is never lost.
 
 ### Dutch
 
@@ -100,9 +99,22 @@ chance**, and **cut-up** (generate a bar, chop it into beats, shuffle). Set
 steps per bar (8, 12 for 6/8, or 16), bars, density, and how much bar 2 drifts
 from bar 1. Click any step to edit it by hand.
 
+## Seeds
+
+Every tab has its own seed box, and every generator runs off it, so the same
+seed and settings always give back the same words, chords, melody or pattern.
+Write down the ones you like; type one back in to hear it again. The dice
+button rolls a fresh seed for that part alone — a new progression under the
+same melody idea, or a new melody over chords you want to keep.
+
+Melody transforms, rhythm cut-ups and hand-edited steps are changes made *on
+top* of what the seed produced, so they are not replayed by it.
+
 ## Playing and exporting
 
 The transport at the bottom is shared: tempo, swing, and which parts sound.
+Whichever part is longest sets the loop length and the shorter ones repeat to
+fill it, so a two-bar drum pattern keeps playing under a four-bar progression.
 Space bar toggles playback. Everything is synthesised with the Web Audio API —
 no samples, no libraries.
 
@@ -112,7 +124,7 @@ tracks (drums on channel 10), swing baked in, ready to drag into any DAW.
 ## Development
 
 ```sh
-npm test                        # 38 unit tests, no dependencies
+npm test                        # 43 unit tests, no dependencies
 node tools/build-wordlists.mjs  # regenerate data/words.*.json
 ```
 
@@ -129,6 +141,7 @@ src/
     theory.js       scales, chords, progressions, voicing, chord parsing
     melody.js       melody generation and cut-up transforms
     rhythm.js       euclidean and friends
+    arrange.js      lays the parts out over the loop, repeats included
     midi.js         a small type-1 MIDI writer
     audio.js        Web Audio playback
   ui/               one module per tab, plus DOM helpers
