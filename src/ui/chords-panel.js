@@ -315,7 +315,12 @@ export function initChords(ctx) {
 
   return {
     highlight(step) {
-      const index = m.stepsPerChord ? Math.floor(step / m.stepsPerChord) : -1;
+      // The progression repeats when the loop is longer than it is, so the
+      // playhead has to wrap back to the first card with it.
+      const count = m.chords.length;
+      const index = m.stepsPerChord && count > 0 && step >= 0
+        ? Math.floor(step / m.stepsPerChord) % count
+        : -1;
       for (const card of ui.out.children) {
         card.classList?.toggle('is-playing', Number(card.dataset.index) === index);
       }

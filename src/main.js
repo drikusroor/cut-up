@@ -174,6 +174,7 @@ function buildSong() {
   const m = state.music;
   const totalChordSteps = m.chords.length * m.stepsPerChord;
   const drumSteps = state.rhythm.pattern?.tracks?.[0]?.pattern.length ?? 0;
+  const melodySteps = m.melody.reduce((max, n) => Math.max(max, n.step + n.length), 0);
   return {
     tempo: state.tempo,
     swing: state.swing,
@@ -181,8 +182,8 @@ function buildSong() {
     stepsPerChord: m.stepsPerChord,
     melody: m.melody,
     rhythm: state.rhythm.pattern,
-    // Loop over whichever part is longest, rounded up to whole drum bars.
-    totalSteps: Math.max(totalChordSteps, drumSteps, 16),
+    // Loop over whichever part is longest; the shorter ones repeat to fill it.
+    totalSteps: Math.max(totalChordSteps, drumSteps, melodySteps, 16),
     parts: state.parts,
     loop: true,
   };
@@ -209,6 +210,8 @@ $('#export-midi').addEventListener('click', () => {
     stepsPerChord: song.stepsPerChord,
     melody: state.parts.melody ? song.melody : [],
     rhythm: state.parts.drums ? song.rhythm : null,
+    // Keep the exported loop the length you heard, muted parts included.
+    totalSteps: song.totalSteps,
   });
   download(`cut-up-${state.music.chordSeed || 'idea'}.mid`, midi, 'audio/midi');
   return undefined;

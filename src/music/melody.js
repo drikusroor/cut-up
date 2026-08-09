@@ -120,10 +120,13 @@ function stepTowards(from, allowedPcs, drift, rng, low, high, shape) {
   if (target > high) target = high - randInt(rng, 0, 4);
   if (target < low) target = low + randInt(rng, 0, 4);
   const landed = nearest(target, allowedPcs, low, high);
-  if (landed === from && shape !== 'leaps') {
-    return nearest(from + (chance(rng, 0.5) ? 2 : -2), allowedPcs, low, high);
-  }
-  return landed;
+  if (landed !== from || shape === 'leaps') return landed;
+
+  // The nearest allowed pitch to a small drift is very often the note we are
+  // already sitting on: a triad can be four semitones wide, so every ±1 and ±2
+  // rounds straight back. Left alone the line locks onto one pitch and the
+  // piano roll draws a flat bar, so walk out to the next allowed pitch instead.
+  return nextAllowed(from, allowedPcs, low, high, drift >= 0 ? 1 : -1) ?? landed;
 }
 
 /** Closest MIDI note to `target` whose pitch class is allowed. */
@@ -139,6 +142,19 @@ function nearest(target, allowedPcs, low, high) {
     }
   }
   return best ?? Math.min(high, Math.max(low, target));
+}
+
+/**
+ * The first allowed pitch strictly away from `from`, searching in `direction`
+ * and turning round at the edge of the range. Null when nothing is allowed.
+ */
+function nextAllowed(from, allowedPcs, low, high, direction) {
+  for (const dir of [direction, -direction]) {
+    for (let midi = from + dir; midi >= low && midi <= high; midi += dir) {
+      if (allowedPcs.includes(((midi % 12) + 12) % 12)) return midi;
+    }
+  }
+  return null;
 }
 
 // --- Cut-up transforms ------------------------------------------------------
