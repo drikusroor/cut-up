@@ -1,0 +1,14 @@
+{
+  "name": "cut-up",
+  "version": "1.0.0",
+  "description": "A scissors-and-paste machine for lyrics, chord progressions, melodies and rhythms.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node --test 'test/*.test.js'",
+    "build:words": "node tools/build-wordlists.mjs"
+  },
+  "keywords": ["cut-up", "songwriting", "lyrics", "chords", "midi", "generative"],
+  "license": "MIT"
+}
