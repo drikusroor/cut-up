@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cut-Up — a scissors-and-paste machine for words, chords and rhythms</title>
+<meta name="description" content="Burroughs and Bowie cut up newspapers to find new lyrics. This does the same with English and Dutch word banks, your own pasted text, chord progressions, melodies and drum patterns.">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>✂️</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="scissors" aria-hidden="true">✂</span>
+    <div>
+      <h1>Cut-Up</h1>
+      <p class="tagline">Chop up language, chords and rhythm until something useful falls out.</p>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button class="tab is-active" role="tab" aria-selected="true" data-tab="words">Words</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="chords">Chords &amp; melody</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="rhythm">Rhythm</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ======================= WORDS ======================= -->
+<section class="panel is-active" id="panel-words" role="tabpanel" aria-label="Words">
+  <div class="layout">
+
+    <div class="controls">
+      <fieldset>
+        <legend>Source</legend>
+
+        <label class="field">
+          <span>Word bank language</span>
+          <select id="lang">
+            <option value="en">English</option>
+            <option value="nl">Nederlands</option>
+          </select>
+          <small id="dict-status">Loading dictionary…</small>
+        </label>
+
+        <label class="field">
+          <span>Paste an article, a page of a book, anything</span>
+          <textarea id="source-text" rows="8" placeholder="Paste your newspaper article here, or load one of the seed texts below."></textarea>
+        </label>
+
+        <div class="row">
+          <label class="field grow">
+            <span>Seed text</span>
+            <select id="seed-text"><option value="">— none —</option></select>
+          </label>
+          <button type="button" class="btn ghost" id="clear-text">Clear</button>
+        </div>
+
+        <details id="second-text-wrap">
+          <summary>Second text (for fold-in)</summary>
+          <textarea id="source-text-2" rows="5" placeholder="A second source. Fold-in reads the start of one line into the end of the other."></textarea>
+        </details>
+      </fieldset>
+
+      <fieldset>
+        <legend>Method</legend>
+        <div class="segmented" id="method" role="radiogroup" aria-label="Cut-up method"></div>
+        <small id="method-hint" class="hint"></small>
+      </fieldset>
+
+      <fieldset>
+        <legend>Mix</legend>
+        <label class="field slider">
+          <span>Your text <output id="out-textWeight"></output></span>
+          <input type="range" id="textWeight" min="0" max="1" step="0.05" value="1">
+        </label>
+        <label class="field slider">
+          <span>Dictionary <output id="out-dictWeight"></output></span>
+          <input type="range" id="dictWeight" min="0" max="1" step="0.05" value="0.25">
+        </label>
+        <label class="field slider">
+          <span>Imagery bank <output id="out-imageryWeight"></output></span>
+          <input type="range" id="imageryWeight" min="0" max="1" step="0.05" value="0.35">
+        </label>
+        <label class="field slider">
+          <span>Common ↔ rare words <output id="out-rarity"></output></span>
+          <input type="range" id="rarity" min="0" max="1" step="0.05" value="0.2">
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Shape</legend>
+        <div class="row">
+          <label class="field"><span>Lines</span><input type="number" id="lines" min="1" max="40" value="8"></label>
+          <label class="field"><span>Min words</span><input type="number" id="minWords" min="1" max="20" value="4"></label>
+          <label class="field"><span>Max words</span><input type="number" id="maxWords" min="1" max="24" value="8"></label>
+        </div>
+        <div class="row">
+          <label class="field"><span>Strip min</span><input type="number" id="stripMin" min="1" max="8" value="2"></label>
+          <label class="field"><span>Strip max</span><input type="number" id="stripMax" min="1" max="10" value="4"></label>
+        </div>
+        <label class="field slider">
+          <span>Connective words <output id="out-glue"></output></span>
+          <input type="range" id="glue" min="0" max="0.8" step="0.05" value="0.25">
+        </label>
+        <label class="check"><input type="checkbox" id="capitalize" checked> Capitalise each line</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Seed</legend>
+        <div class="row">
+          <input type="text" id="seed" class="grow" aria-label="Random seed">
+          <button type="button" class="btn ghost" id="new-seed" title="New random seed">🎲</button>
+        </div>
+        <small class="hint">Same seed and settings always give the same cut-up.</small>
+      </fieldset>
+    </div>
+
+    <div class="output">
+      <div class="output-head">
+        <button type="button" class="btn primary" id="cut">✂ Cut it up</button>
+        <button type="button" class="btn" id="reroll">Reroll</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn ghost" id="copy-lines">Copy</button>
+        <button type="button" class="btn ghost" id="download-lines">Download .txt</button>
+      </div>
+
+      <ol class="lines" id="lines-out" aria-live="polite"></ol>
+
+      <div class="titles" id="titles-out" hidden>
+        <h3>Title ideas</h3>
+        <ul></ul>
+      </div>
+
+      <div class="keepers">
+        <div class="output-head">
+          <h3>Keepers</h3>
+          <small class="hint">Click ★ on any line to keep it. Saved in this browser.</small>
+          <div class="spacer"></div>
+          <button type="button" class="btn ghost" id="copy-keepers">Copy</button>
+          <button type="button" class="btn ghost" id="clear-keepers">Clear</button>
+        </div>
+        <ul class="keeper-list" id="keepers-out"></ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= CHORDS ======================= -->
+<section class="panel" id="panel-chords" role="tabpanel" aria-label="Chords and melody" hidden>
+  <div class="layout">
+
+    <div class="controls">
+      <fieldset>
+        <legend>Key</legend>
+        <div class="row">
+          <label class="field grow"><span>Root</span><select id="root"></select></label>
+          <label class="field grow"><span>Scale</span><select id="scale"></select></label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Progression</legend>
+        <label class="field">
+          <span>Method</span>
+          <select id="prog-mode"></select>
+          <small id="prog-hint" class="hint"></small>
+        </label>
+        <label class="field" id="own-chords-wrap" hidden>
+          <span>Your chords</span>
+          <input type="text" id="own-chords" placeholder="Am F C G  |  Dm7 G7 Cmaj7">
+        </label>
+        <label class="field"><span>Chords</span><input type="number" id="prog-length" min="2" max="16" value="4"></label>
+        <label class="field slider">
+          <span>Sevenths <output id="out-sevenths"></output></span>
+          <input type="range" id="sevenths" min="0" max="1" step="0.05" value="0.2">
+        </label>
+        <label class="field slider">
+          <span>Chromatic spice <output id="out-spice"></output></span>
+          <input type="range" id="spice" min="0" max="1" step="0.05" value="0.15">
+        </label>
+        <label class="field"><span>Bars per chord</span>
+          <select id="bars-per-chord">
+            <option value="8">½</option>
+            <option value="16" selected>1</option>
+            <option value="32">2</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Melody</legend>
+        <label class="field"><span>Shape</span><select id="melody-shape"></select></label>
+        <label class="field slider">
+          <span>Density <output id="out-density"></output></span>
+          <input type="range" id="mel-density" min="0.1" max="1" step="0.05" value="0.45">
+        </label>
+        <label class="field slider">
+          <span>Chord tones <output id="out-chordTones"></output></span>
+          <input type="range" id="chordTones" min="0" max="1" step="0.05" value="0.6">
+        </label>
+        <label class="field slider">
+          <span>Rests <output id="out-restiness"></output></span>
+          <input type="range" id="restiness" min="0" max="0.8" step="0.05" value="0.2">
+        </label>
+        <div class="row">
+          <label class="field"><span>Low note</span><select id="range-low"></select></label>
+          <label class="field"><span>High note</span><select id="range-high"></select></label>
+        </div>
+        <div class="row wrap" id="melody-transforms"></div>
+      </fieldset>
+    </div>
+
+    <div class="output">
+      <div class="output-head">
+        <button type="button" class="btn primary" id="gen-chords">✂ New progression</button>
+        <button type="button" class="btn" id="gen-melody">New melody</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn ghost" id="copy-chords">Copy chords</button>
+      </div>
+
+      <div class="chord-strip" id="chords-out" aria-live="polite"></div>
+
+      <h3 class="section-label">Melody</h3>
+      <canvas id="piano-roll" class="piano-roll" height="260"></canvas>
+      <small class="hint">Notes are laid out over the progression. Grey lines are bars; the highlighted row is the key's root.</small>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= RHYTHM ======================= -->
+<section class="panel" id="panel-rhythm" role="tabpanel" aria-label="Rhythm" hidden>
+  <div class="layout">
+
+    <div class="controls">
+      <fieldset>
+        <legend>Pattern</legend>
+        <label class="field">
+          <span>Style</span>
+          <select id="rhythm-style"></select>
+          <small id="rhythm-hint" class="hint"></small>
+        </label>
+        <div class="row">
+          <label class="field grow"><span>Steps per bar</span>
+            <select id="steps-per-bar">
+              <option value="8">8</option>
+              <option value="12">12 (6/8)</option>
+              <option value="16" selected>16</option>
+            </select>
+          </label>
+          <label class="field grow"><span>Bars</span><input type="number" id="rhythm-bars" min="1" max="4" value="2"></label>
+        </div>
+        <label class="field slider">
+          <span>Density <output id="out-rdensity"></output></span>
+          <input type="range" id="rhythm-density" min="0.05" max="1" step="0.05" value="0.5">
+        </label>
+        <label class="field slider">
+          <span>Bar-to-bar variation <output id="out-variation"></output></span>
+          <input type="range" id="variation" min="0" max="1" step="0.05" value="0.25">
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Kit</legend>
+        <div class="checks" id="track-picker"></div>
+      </fieldset>
+    </div>
+
+    <div class="output">
+      <div class="output-head">
+        <button type="button" class="btn primary" id="gen-rhythm">✂ New rhythm</button>
+        <button type="button" class="btn" id="cutup-rhythm">Cut up this pattern</button>
+        <div class="spacer"></div>
+        <small class="hint">Click any step to edit it.</small>
+      </div>
+      <div class="grid-wrap"><div class="step-grid" id="rhythm-out"></div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ======================= TRANSPORT ======================= -->
+<div class="transport" id="transport" hidden>
+  <button type="button" class="btn primary" id="play">▶ Play</button>
+  <button type="button" class="btn" id="stop">■ Stop</button>
+  <label class="field inline"><span>BPM</span><input type="number" id="tempo" min="40" max="220" value="96"></label>
+  <label class="field inline slider">
+    <span>Swing <output id="out-swing"></output></span>
+    <input type="range" id="swing" min="0" max="0.75" step="0.05" value="0">
+  </label>
+  <div class="parts">
+    <label class="check"><input type="checkbox" id="part-chords" checked> Chords</label>
+    <label class="check"><input type="checkbox" id="part-melody" checked> Melody</label>
+    <label class="check"><input type="checkbox" id="part-drums" checked> Drums</label>
+  </div>
+  <div class="spacer"></div>
+  <button type="button" class="btn ghost" id="export-midi">⤓ Export MIDI</button>
+</div>
+
+<footer class="colophon">
+  <p>
+    Word banks derived from
+    <a href="https://github.com/hermitdave/FrequencyWords" rel="noopener">hermitdave/FrequencyWords</a>
+    (OpenSubtitles 2018, CC BY-SA 4.0). Everything else is generated in your browser — nothing is uploaded.
+  </p>
+</footer>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
