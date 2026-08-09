@@ -4,6 +4,21 @@
 import { arrange } from './arrange.js';
 import { stepTime } from './rhythm.js';
 
+/** How far ahead of the clock notes are handed to the audio thread. */
+const LOOKAHEAD = 1.5;
+/** How often we top that window up. */
+const PUMP_MS = 60;
+
+/**
+ * A tempo we can actually divide by. An empty BPM box reads back as 0, which
+ * makes every note infinitely long — in other words, silence — so anything that
+ * is not a positive, finite number falls back rather than poisoning the clock.
+ */
+export function safeTempo(value, fallback = 100) {
+  const tempo = Number(value);
+  return Number.isFinite(tempo) && tempo > 0 ? tempo : fallback;
+}
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -47,12 +62,27 @@ export class AudioEngine {
     }
     for (const voice of this.voices) {
       try {
-        voice.stop();
+        voice.node.stop();
       } catch {
         // Already stopped; nothing to do.
       }
     }
     this.voices = [];
+  }
+
+  /**
+   * Holds on to a scheduled voice so stop() can silence it, and forgets it once
+   * it has rung out — otherwise a long session accumulates every note it ever
+   * played.
+   */
+  keep(node, until) {
+    this.voices.push({ node, until });
+  }
+
+  forgetSpentVoices() {
+    if (this.voices.length < 64) return;
+    const now = this.ctx.currentTime;
+    this.voices = this.voices.filter((voice) => voice.until > now);
   }
 
   /**
@@ -74,70 +104,92 @@ export class AudioEngine {
     const ctx = this.ensure();
 
     const {
-      tempo = 100,
       swing = 0,
       loop = true,
       parts = { chords: true, melody: true, drums: true },
     } = song;
+    const tempo = safeTempo(song.tempo);
 
     // Shorter parts repeat to fill the loop — see arrange().
     const { totalSteps, chords, melody, drums } = arrange(song);
     const secondsPerStep = 60 / tempo / 4;
 
     this.secondsPerStep = secondsPerStep;
-    this.loopSeconds = totalSteps * secondsPerStep;
+    // A zero-length loop would leave the scheduler below spinning on the spot.
+    this.loopSeconds = Math.max(totalSteps, 1) * secondsPerStep;
+
+    // One pass of the song, flattened into things to do at an offset from its
+    // start. A section-by-section arrangement can be hundreds of bars long, so
+    // this is built once and then fed to the audio thread a window at a time —
+    // handing over the whole song at once locks the tab up for seconds.
+    const events = [];
+    if (parts.chords) {
+      for (const chord of chords) {
+        const duration = chord.length * secondsPerStep * 0.96;
+        chord.voicing.forEach((midi, voice) => {
+          // Tiny spread so the chord sounds strummed rather than stamped.
+          events.push({
+            at: chord.step * secondsPerStep + voice * 0.012,
+            play: (time) => this.pad(midi, time, duration, 0.16),
+          });
+        });
+      }
+    }
+    if (parts.melody) {
+      for (const note of melody) {
+        const duration = Math.max(0.08, note.length * secondsPerStep * 0.92);
+        const gain = ((note.velocity ?? 96) / 127) * 0.28;
+        events.push({
+          at: stepTime(note.step, secondsPerStep, swing),
+          play: (time) => this.lead(note.midi, time, duration, gain),
+        });
+      }
+    }
+    if (parts.drums) {
+      for (const hit of drums) {
+        const gain = (hit.velocity / 127) * 0.7;
+        events.push({
+          at: stepTime(hit.step, secondsPerStep, swing),
+          play: (time) => this.drum(hit.id, time, gain),
+        });
+      }
+    }
+    events.sort((a, b) => a.at - b.at);
+
+    this.startTime = ctx.currentTime + 0.08;
     this.playing = true;
 
-    const schedule = (at) => {
-      if (parts.chords) {
-        for (const chord of chords) {
-          const time = at + chord.step * secondsPerStep;
-          const duration = chord.length * secondsPerStep * 0.96;
-          chord.voicing.forEach((midi, voice) => {
-            // Tiny spread so the chord sounds strummed rather than stamped.
-            this.pad(midi, time + voice * 0.012, duration, 0.16);
-          });
+    let pass = 0;
+    let cursor = 0;
+
+    const pump = () => {
+      if (!this.playing) return;
+      const horizon = ctx.currentTime + LOOKAHEAD;
+
+      while (events.length) {
+        if (cursor >= events.length) {
+          if (!loop) break;
+          pass += 1;
+          cursor = 0;
         }
+        const event = events[cursor];
+        const time = this.startTime + pass * this.loopSeconds + event.at;
+        if (time > horizon) break;
+        event.play(time);
+        cursor += 1;
       }
-      if (parts.melody) {
-        for (const note of melody) {
-          this.lead(
-            note.midi,
-            at + stepTime(note.step, secondsPerStep, swing),
-            Math.max(0.08, note.length * secondsPerStep * 0.92),
-            ((note.velocity ?? 96) / 127) * 0.28,
-          );
-        }
+
+      this.forgetSpentVoices();
+
+      const done = !loop && cursor >= events.length;
+      if (done && ctx.currentTime > this.startTime + this.loopSeconds) {
+        this.playing = false;
+        return;
       }
-      if (parts.drums) {
-        for (const hit of drums) {
-          const time = at + stepTime(hit.step, secondsPerStep, swing);
-          this.drum(hit.id, time, (hit.velocity / 127) * 0.7);
-        }
-      }
+      this.loopHandle = setTimeout(pump, PUMP_MS);
     };
 
-    const startAt = ctx.currentTime + 0.08;
-    this.startTime = startAt;
-    schedule(startAt);
-
-    if (loop) {
-      let nextAt = startAt + this.loopSeconds;
-      const tick = () => {
-        if (!this.playing) return;
-        // Schedule the next pass a little before the current one runs out.
-        if (nextAt - ctx.currentTime < this.loopSeconds) {
-          schedule(nextAt);
-          nextAt += this.loopSeconds;
-        }
-        this.loopHandle = setTimeout(tick, Math.max(50, (this.loopSeconds * 1000) / 4));
-      };
-      this.loopHandle = setTimeout(tick, Math.max(50, (this.loopSeconds * 1000) / 4));
-    } else {
-      this.loopHandle = setTimeout(() => {
-        this.playing = false;
-      }, (this.loopSeconds + 0.5) * 1000);
-    }
+    pump();
   }
 
   /** Warm sustained voice for chords. */
@@ -164,7 +216,7 @@ export class AudioEngine {
       osc.connect(level_).connect(filter);
       osc.start(time);
       osc.stop(time + duration + 0.6);
-      this.voices.push(osc);
+      this.keep(osc, time + duration + 0.6);
     }
 
     filter.connect(out).connect(this.master);
@@ -192,7 +244,7 @@ export class AudioEngine {
     osc.connect(filter).connect(env).connect(this.master);
     osc.start(time);
     osc.stop(time + duration + 0.4);
-    this.voices.push(osc);
+    this.keep(osc, time + duration + 0.4);
   }
 
   /** Synthesised kit pieces. */
@@ -208,7 +260,7 @@ export class AudioEngine {
       osc.connect(env).connect(this.master);
       osc.start(time);
       osc.stop(time + 0.35);
-      this.voices.push(osc);
+      this.keep(osc, time + 0.35);
       return;
     }
 
@@ -224,7 +276,7 @@ export class AudioEngine {
       osc.connect(env).connect(this.master);
       osc.start(time);
       osc.stop(time + 0.3);
-      this.voices.push(osc);
+      this.keep(osc, time + 0.3);
       return;
     }
 
@@ -260,7 +312,7 @@ export class AudioEngine {
         body.connect(bodyEnv).connect(this.master);
         body.start(time);
         body.stop(time + 0.15);
-        this.voices.push(body);
+        this.keep(body, time + 0.15);
       }
     }
 
@@ -268,7 +320,7 @@ export class AudioEngine {
     // stop() must come after start(), or the node throws.
     noise.start(time);
     noise.stop(stopAt);
-    this.voices.push(noise);
+    this.keep(noise, stopAt);
   }
 
   noiseBuffer() {

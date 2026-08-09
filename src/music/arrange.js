@@ -8,11 +8,22 @@
 // A song can also be a list of `sections` — intro, A, B, coda — in which case
 // each one is laid out on its own and the results are strung end to end.
 
+/**
+ * Chords have to occupy some time. A stored setting of 0 — which is what a
+ * blank select reads back as — would give the progression no length at all,
+ * and anything stepping through the loop a chord at a time would never arrive.
+ */
+function perChord(value) {
+  const steps = Math.round(Number(value));
+  return Number.isFinite(steps) && steps > 0 ? steps : 16;
+}
+
 /** The natural length of a song in steps: however long its longest part is. */
 export function naturalSteps(song) {
   const {
-    chordVoicings = [], stepsPerChord = 16, melody = [], rhythm = null,
+    chordVoicings = [], melody = [], rhythm = null,
   } = song || {};
+  const stepsPerChord = perChord(song?.stepsPerChord);
   const chordSpan = chordVoicings.length * stepsPerChord;
   const drumSpan = rhythm?.tracks?.[0]?.pattern.length ?? 0;
   const melodyEnd = melody.reduce((max, note) => Math.max(max, note.step + note.length), 0);
@@ -38,10 +49,10 @@ export function arrange(song) {
 
   const {
     chordVoicings = [],
-    stepsPerChord = 16,
     melody = [],
     rhythm = null,
   } = song || {};
+  const stepsPerChord = perChord(song?.stepsPerChord);
 
   const chordSpan = chordVoicings.length * stepsPerChord;
   const drumSpan = rhythm?.tracks?.[0]?.pattern.length ?? 0;

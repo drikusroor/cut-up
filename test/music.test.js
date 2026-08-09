@@ -21,7 +21,8 @@ import {
   MELODY_SHAPES,
   transformMelody,
 } from '../src/music/melody.js';
-import { arrange } from '../src/music/arrange.js';
+import { arrange, naturalSteps } from '../src/music/arrange.js';
+import { safeTempo } from '../src/music/audio.js';
 import {
   buildSongPlan,
   forkSection,
@@ -422,6 +423,38 @@ test('a section carries its own kit, so the drums change with the section', () =
   const { drums } = arrange({ sections: plan.blocks.map((x) => x.song) });
   assert.ok(drums.length, 'A has a kick pattern');
   assert.equal(drums.every((hit) => hit.step < 32), true, 'and B, which has none, stays dry');
+});
+
+// --- things that used to make it fall silent --------------------------------
+
+test('an unusable tempo falls back instead of stopping the clock', () => {
+  // An empty BPM box reads back as "" — 0 as a number — which makes a step
+  // infinitely long, so every note is scheduled at a time that never arrives.
+  assert.equal(safeTempo(0), 100);
+  assert.equal(safeTempo(''), 100);
+  assert.equal(safeTempo(null), 100);
+  assert.equal(safeTempo(undefined), 100);
+  assert.equal(safeTempo(NaN), 100);
+  assert.equal(safeTempo(-96), 100);
+  assert.equal(safeTempo('abc', 96), 96);
+  // Anything usable is left exactly as it is.
+  assert.equal(safeTempo(96), 96);
+  assert.equal(safeTempo('140'), 140);
+});
+
+test('a progression with no length still lays out, rather than hanging', () => {
+  // A select with no matching option reads back as 0 steps per chord. Stepping
+  // through the loop a chord at a time then never advances.
+  const song = {
+    chordVoicings: voiceProgression(parseChords('Am F C G'), { octave: 3 }),
+    stepsPerChord: 0,
+    melody: [{ midi: 72, step: 0, length: 4 }],
+  };
+
+  assert.equal(naturalSteps(song), 64, 'a chord falls back to one bar');
+  const { totalSteps, chords } = arrange(song);
+  assert.equal(totalSteps, 64);
+  assert.deepEqual(chords.map((c) => c.step), [0, 16, 32, 48]);
 });
 
 // --- midi -------------------------------------------------------------------

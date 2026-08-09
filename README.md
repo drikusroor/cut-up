@@ -182,7 +182,7 @@ loop, or the whole song if that is what you are playing.
 ## Development
 
 ```sh
-npm test                        # 57 unit tests, no dependencies
+npm test                        # 59 unit tests, no dependencies
 node tools/build-wordlists.mjs  # regenerate data/words.*.json
 ```
 

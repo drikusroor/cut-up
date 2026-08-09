@@ -5,13 +5,31 @@ import { initWords } from './ui/words-panel.js';
 import { initChords } from './ui/chords-panel.js';
 import { initRhythm } from './ui/rhythm-panel.js';
 import { initSong } from './ui/song-panel.js';
-import { AudioEngine } from './music/audio.js';
+import { AudioEngine, safeTempo } from './music/audio.js';
 import { songToMidi } from './music/midi.js';
 import { buildSongPlan } from './music/sections.js';
 import { emptyMelodyEdits } from './music/melody.js';
 import { randomSeed } from './rng.js';
 
 const STORAGE_KEY = 'cut-up:v1';
+/** What the BPM box will accept — it matches the input's own min and max. */
+const TEMPO_RANGE = [40, 220];
+
+/**
+ * Clearing the BPM box leaves it reading "", which is 0 as a number: a tempo
+ * that makes every note infinitely long, so nothing sounds — and it used to be
+ * saved, which meant the silence came back with you. Anything unusable now
+ * falls back to the tempo you had.
+ */
+function readTempo(value, fallback) {
+  const [min, max] = TEMPO_RANGE;
+  return Math.min(max, Math.max(min, Math.round(safeTempo(value, fallback))));
+}
+
+function readSwing(value, fallback = 0) {
+  const swing = Number(value);
+  return Number.isFinite(swing) ? Math.min(0.75, Math.max(0, swing)) : fallback;
+}
 
 function defaultState() {
   return {
@@ -99,6 +117,10 @@ function loadState() {
       sections: Array.isArray(stored.sections) ? stored.sections : [],
       arrangement: Array.isArray(stored.arrangement) ? stored.arrangement : [],
     };
+    // A stored tempo of 0 would leave the app silent for good, so a saved state
+    // that has one is repaired on the way in rather than obeyed.
+    state.tempo = readTempo(state.tempo, base.tempo);
+    state.swing = readSwing(state.swing, base.swing);
     // A melody saved before hand edits existed becomes its own base, so the
     // line you left behind is still there and is now draggable.
     if (!state.music.melodyBase?.length && state.music.melody?.length) {
@@ -171,13 +193,16 @@ const renderSwing = () => { swingOut.textContent = `${Math.round(Number(swingInp
 renderSwing();
 
 tempoInput.addEventListener('change', () => {
-  state.tempo = Number(tempoInput.value);
+  state.tempo = readTempo(tempoInput.value, state.tempo);
+  // Put the usable number back on screen, so an empty box does not look like a
+  // setting you are allowed to leave.
+  tempoInput.value = state.tempo;
   save();
   if (audio.playing) startPlayback();
 });
 swingInput.addEventListener('input', renderSwing);
 swingInput.addEventListener('change', () => {
-  state.swing = Number(swingInput.value);
+  state.swing = readSwing(swingInput.value, state.swing);
   save();
   if (audio.playing) startPlayback();
 });

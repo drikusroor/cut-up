@@ -105,7 +105,10 @@ export function initChords(ctx) {
     ui.mode.value = m.mode;
     ui.own.value = m.ownChords;
     ui.length.value = m.length;
+    // A stored value the select has no option for would blank it, and a blank
+    // select reads back as 0 steps per chord — a bar of no length.
     ui.barsPerChord.value = String(m.stepsPerChord);
+    if (!ui.barsPerChord.value) ui.barsPerChord.value = '16';
     ui.shape.value = m.melodyShape;
     ui.rangeLow.value = String(m.rangeLow);
     ui.rangeHigh.value = String(m.rangeHigh);
@@ -134,7 +137,7 @@ export function initChords(ctx) {
     m.mode = ui.mode.value;
     m.ownChords = ui.own.value;
     m.length = Number(ui.length.value);
-    m.stepsPerChord = Number(ui.barsPerChord.value);
+    m.stepsPerChord = Number(ui.barsPerChord.value) || 16;
     m.melodyShape = ui.shape.value;
     m.rangeLow = Number(ui.rangeLow.value);
     m.rangeHigh = Number(ui.rangeHigh.value);
@@ -393,7 +396,9 @@ export function initChords(ctx) {
       g.stroke();
     }
     g.strokeStyle = 'rgba(255,255,255,0.12)';
-    for (let step = 0; step <= steps; step += m.stepsPerChord) {
+    // Never zero: a bar of no length would draw lines here forever.
+    const barSteps = Math.max(1, m.stepsPerChord);
+    for (let step = 0; step <= steps; step += barSteps) {
       g.beginPath();
       g.moveTo(step * stepWidth + 0.5, 0);
       g.lineTo(step * stepWidth + 0.5, height);
