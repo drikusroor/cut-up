@@ -14,6 +14,12 @@ import {
 } from '../music/sections.js';
 import { chordSymbol, keyUsesFlats, noteName } from '../music/theory.js';
 import { melodyEditCount } from '../music/melody.js';
+import {
+  drumKit,
+  harmonyInstrument,
+  leadInstrument,
+  resolveInstruments,
+} from '../music/instruments.js';
 
 /**
  * @param {object} ctx app context
@@ -51,12 +57,19 @@ export function initSong(ctx, panels) {
   function summarise(section) {
     const music = section.music || {};
     const flats = keyUsesFlats(music.rootPc ?? 0, music.scaleId);
+    const sound = resolveInstruments(music, section.rhythm);
     return {
       key: `${noteName(music.rootPc ?? 0, flats)} ${music.scaleId || ''}`.trim(),
       chords: (music.chords || []).map((c) => chordSymbol(c, flats)).join(' '),
       bars: bars(sectionSteps(section)),
       notes: (music.melody || []).length,
       edits: melodyEditCount(music.melodyEdits),
+      // Sections carry their own voices, so the shelf has to say which.
+      voices: [
+        leadInstrument(sound.lead).label,
+        harmonyInstrument(sound.harmony).label,
+        drumKit(sound.kit).label,
+      ].join(' · '),
     };
   }
 
@@ -197,6 +210,7 @@ export function initSong(ctx, panels) {
         ]),
         el('div', { class: 'section-meta', text: `${info.key} · ${info.bars} bars · ${info.notes} notes${info.edits ? ` · ${info.edits} hand-edited` : ''}` }),
         el('div', { class: 'section-chords', text: info.chords || '—' }),
+        el('div', { class: 'section-meta', text: info.voices }),
         el('div', { class: 'section-actions' }, [
           el('button', {
             type: 'button', class: 'btn ghost', title: 'Add it to the running order', onclick: () => addToSong(section),

@@ -13,6 +13,16 @@ import {
   voiceProgression,
 } from '../music/theory.js';
 import {
+  AUTO,
+  HARMONY_INSTRUMENTS,
+  harmonyInstrument,
+  instrumentOptions,
+  LEAD_INSTRUMENTS,
+  leadInstrument,
+  resolveHarmony,
+  resolveLead,
+} from '../music/instruments.js';
+import {
   applyMelodyEdits,
   EDIT_RANGE,
   emptyMelodyEdits,
@@ -57,6 +67,12 @@ export function initChords(ctx) {
     undoEdit: $('#undo-melody-edit'),
     resetEdits: $('#reset-melody-edits'),
     editStatus: $('#melody-edit-status'),
+    lead: $('#lead-instrument'),
+    harmony: $('#harmony-instrument'),
+    leadHint: $('#lead-hint'),
+    harmonyHint: $('#harmony-hint'),
+    hearLead: $('#hear-lead'),
+    hearHarmony: $('#hear-harmony'),
   };
 
   const sliders = ['sevenths', 'spice'];
@@ -83,6 +99,8 @@ export function initChords(ctx) {
   });
   fillSelect(ui.rangeLow, noteOptions, m.rangeLow);
   fillSelect(ui.rangeHigh, noteOptions, m.rangeHigh);
+  fillSelect(ui.lead, instrumentOptions(LEAD_INSTRUMENTS), m.leadInstrument);
+  fillSelect(ui.harmony, instrumentOptions(HARMONY_INSTRUMENTS), m.harmonyInstrument);
 
   for (const id of sliders) bindSlider($(`#${id}`), $(`#out-${id}`), PERCENT);
   bindSlider($('#mel-density'), $('#out-density'), PERCENT);
@@ -112,6 +130,9 @@ export function initChords(ctx) {
     // Before anything reads the controls, or the stored seeds look like blanks.
     ui.chordSeed.value = m.chordSeed;
     ui.melodySeed.value = m.melodySeed;
+    ui.lead.value = m.leadInstrument || AUTO;
+    ui.harmony.value = m.harmonyInstrument || AUTO;
+    syncSound();
     for (const id of sliders) $(`#${id}`).value = m[id];
     for (const [id, key] of melodySliders) $(`#${id}`).value = m[key];
     for (const input of [$('#sevenths'), $('#spice'), $('#mel-density'), $('#chordTones'), $('#restiness')]) {
@@ -123,6 +144,28 @@ export function initChords(ctx) {
     const mode = PROGRESSION_MODES.find((p) => p.id === m.mode);
     ui.hint.textContent = mode ? mode.hint : '';
     ui.ownWrap.hidden = m.mode !== 'cutup';
+  }
+
+  /** The two voices this idea is currently played with. */
+  function currentSound() {
+    return {
+      lead: resolveLead(m.leadInstrument, m.melodySeed),
+      harmony: resolveHarmony(m.harmonyInstrument, m.chordSeed),
+    };
+  }
+
+  /**
+   * Says which instrument you actually got — the point of "from the seed" is
+   * that it changes under you, so it has to be readable.
+   */
+  function syncSound() {
+    const sound = currentSound();
+    const describe = (choice, spec) => (choice === AUTO
+      ? `From this seed: ${spec.label} — ${spec.hint}`
+      : spec.hint);
+    ui.leadHint.textContent = describe(m.leadInstrument, leadInstrument(sound.lead));
+    ui.harmonyHint.textContent = describe(m.harmonyInstrument, harmonyInstrument(sound.harmony));
+    ctx.syncInstruments?.();
   }
 
   function readControls() {
@@ -138,6 +181,8 @@ export function initChords(ctx) {
     m.melodyShape = ui.shape.value;
     m.rangeLow = Number(ui.rangeLow.value);
     m.rangeHigh = Number(ui.rangeHigh.value);
+    m.leadInstrument = ui.lead.value;
+    m.harmonyInstrument = ui.harmony.value;
     if (m.rangeHigh < m.rangeLow + 7) m.rangeHigh = m.rangeLow + 7;
     for (const id of sliders) m[id] = Number($(`#${id}`).value);
     for (const [id, key] of melodySliders) m[key] = Number($(`#${id}`).value);
@@ -151,6 +196,8 @@ export function initChords(ctx) {
     readControls();
     if (newSeed) m.chordSeed = randomSeed();
     ui.chordSeed.value = m.chordSeed;
+    // A new seed can mean a new instrument, so the readout has to keep up.
+    syncSound();
     const rng = makeRng(`chords:${m.chordSeed}`);
 
     const fresh = generateProgression({
@@ -187,6 +234,7 @@ export function initChords(ctx) {
     if (!m.chords.length) return;
     if (newSeed) m.melodySeed = randomSeed();
     ui.melodySeed.value = m.melodySeed;
+    syncSound();
     m.melodyBase = generateMelody({
       rng: makeRng(`melody:${m.melodySeed}`),
       chords: m.chords,
@@ -285,7 +333,7 @@ export function initChords(ctx) {
           class: `chord-card${locked ? ' is-locked' : ''}`,
           dataset: { index: String(index) },
           title: 'Click to hear it',
-          onclick: () => audio.strum(voicing),
+          onclick: () => audio.strum(voicing, currentSound().harmony),
         }, [
           el('div', { class: 'roman', text: chord.roman || '·' }),
           el('div', { class: 'symbol', text: chordSymbol(chord, flats) }),
@@ -624,6 +672,28 @@ export function initChords(ctx) {
   });
   ui.undoEdit.addEventListener('click', undoEdit);
   ui.resetEdits.addEventListener('click', resetEdits);
+
+  for (const select of [ui.lead, ui.harmony]) {
+    select.addEventListener('change', () => {
+      m.leadInstrument = ui.lead.value;
+      m.harmonyInstrument = ui.harmony.value;
+      syncSound();
+      save();
+      // Changing an instrument does not change a note, so nothing is
+      // regenerated — but if it is playing, you should hear it straight away.
+      ctx.refreshPlayback?.();
+    });
+  }
+
+  // A little of the melody's own range, and the first chord of the progression.
+  ui.hearLead.addEventListener('click', () => {
+    const root = m.rootPc + 12 * Math.ceil((m.rangeLow - m.rootPc) / 12);
+    audio.audition(leadInstrument(currentSound().lead), [root, root + 4, root + 7, root + 12]);
+  });
+  ui.hearHarmony.addEventListener('click', () => {
+    const voicing = m.voicings[0] || [m.rootPc + 48, m.rootPc + 52, m.rootPc + 55];
+    audio.strum(voicing, currentSound().harmony);
+  });
 
   for (const id of ['root', 'scale', 'prog-length', 'bars-per-chord', 'sevenths', 'spice']) {
     $(`#${id}`).addEventListener('change', () => generateChords({ newSeed: false }));

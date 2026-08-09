@@ -2,12 +2,19 @@
 
 import { $, bindSlider, el, fillSelect } from './dom.js';
 import { makeRng, randomSeed } from '../rng.js';
-import { cutUpPattern, generateRhythm, RHYTHM_STYLES, TRACKS } from '../music/rhythm.js';
+import {
+  cutUpPattern,
+  generateRhythm,
+  randomKitPieces,
+  RHYTHM_STYLES,
+  TRACKS,
+} from '../music/rhythm.js';
+import { AUTO, DRUM_KITS, drumKit, instrumentOptions, resolveKit } from '../music/instruments.js';
 
 const PERCENT = (v) => `${Math.round(Number(v) * 100)}%`;
 
 export function initRhythm(ctx) {
-  const { state, save } = ctx;
+  const { state, save, audio } = ctx;
   const r = state.rhythm;
 
   const ui = {
@@ -23,9 +30,13 @@ export function initRhythm(ctx) {
     cutup: $('#cutup-rhythm'),
     seed: $('#rhythm-seed'),
     newSeed: $('#new-rhythm-seed'),
+    kit: $('#drum-kit'),
+    kitHint: $('#kit-hint'),
+    surpriseKit: $('#surprise-kit'),
   };
 
   fillSelect(ui.style, RHYTHM_STYLES.map((s) => ({ value: s.id, label: s.label })), r.style);
+  fillSelect(ui.kit, instrumentOptions(DRUM_KITS), r.kit);
   bindSlider(ui.density, $('#out-rdensity'), PERCENT);
   bindSlider(ui.variation, $('#out-variation'), PERCENT);
 
@@ -36,12 +47,23 @@ export function initRhythm(ctx) {
     ui.bars.value = r.bars;
     // Before anything reads the controls, or the stored seed looks like a blank.
     ui.seed.value = r.seed;
+    ui.kit.value = r.kit || AUTO;
     ui.density.value = r.density;
     ui.variation.value = r.variation;
     for (const input of [ui.density, ui.variation]) input.dispatchEvent(new Event('input'));
     for (const box of ui.picker.querySelectorAll('input')) {
       box.checked = r.trackIds.includes(box.value);
     }
+    syncKit();
+  }
+
+  /** Which kit you actually got — "from the seed" changes under you. */
+  function syncKit() {
+    const kit = drumKit(resolveKit(r.kit, r.seed));
+    ui.kitHint.textContent = r.kit === AUTO
+      ? `From this seed: ${kit.label} — ${kit.hint}`
+      : kit.hint;
+    ctx.syncInstruments?.();
   }
 
   ui.picker.replaceChildren(
@@ -72,6 +94,7 @@ export function initRhythm(ctx) {
   function readControls() {
     // A seed the user has typed over wins; an empty box means "surprise me".
     r.seed = ui.seed.value.trim() || randomSeed();
+    r.kit = ui.kit.value;
     r.style = ui.style.value;
     r.steps = Number(ui.steps.value);
     r.bars = Number(ui.bars.value);
@@ -83,6 +106,8 @@ export function initRhythm(ctx) {
     readControls();
     if (newSeed) r.seed = randomSeed();
     ui.seed.value = r.seed;
+    // A new seed can mean a new kit, so the readout has to keep up.
+    syncKit();
     r.pattern = generateRhythm({
       rng: makeRng(`rhythm:${r.seed}`),
       steps: r.steps,
@@ -125,7 +150,12 @@ export function initRhythm(ctx) {
 
     ui.out.replaceChildren(
       ...pattern.tracks.map((track) => el('div', { class: 'grid-row', dataset: { track: track.id } }, [
-        el('span', { class: 'label', text: track.label }),
+        el('button', {
+          type: 'button',
+          class: 'label',
+          title: `Hear the ${track.label.toLowerCase()}`,
+          onclick: () => audio.previewDrum(track.id, resolveKit(r.kit, r.seed)),
+        }, [track.label]),
         ...track.pattern.map((on, step) => el('button', {
           type: 'button',
           class: [
@@ -142,6 +172,8 @@ export function initRhythm(ctx) {
             track.velocities[step] = track.pattern[step] ? 100 : 0;
             event.currentTarget.classList.toggle('is-on', track.pattern[step]);
             event.currentTarget.setAttribute('aria-pressed', String(track.pattern[step]));
+            // Hear what you just drew in, the way a drum machine does.
+            if (track.pattern[step]) audio.previewDrum(track.id, resolveKit(r.kit, r.seed));
             save();
           },
         })),
@@ -151,6 +183,20 @@ export function initRhythm(ctx) {
 
   ui.generate.addEventListener('click', () => generate({ newSeed: true }));
   ui.cutup.addEventListener('click', cutUp);
+  ui.kit.addEventListener('change', () => {
+    r.kit = ui.kit.value;
+    syncKit();
+    save();
+    // A kit is a sound, not a pattern — nothing needs regenerating.
+    ctx.refreshPlayback?.();
+  });
+  ui.surpriseKit.addEventListener('click', () => {
+    r.trackIds = randomKitPieces(makeRng(`kit:${randomSeed()}`));
+    for (const box of ui.picker.querySelectorAll('input')) {
+      box.checked = r.trackIds.includes(box.value);
+    }
+    generate({ newSeed: false });
+  });
   // Typing a seed in replays it; the dice roll a fresh one.
   ui.seed.addEventListener('change', () => generate({ newSeed: false }));
   ui.newSeed.addEventListener('click', () => generate({ newSeed: true }));

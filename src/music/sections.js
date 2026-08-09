@@ -7,6 +7,7 @@
 // intro, a couple of verses, a middle eight and a coda.
 
 import { naturalSteps } from './arrange.js';
+import { resolveInstruments } from './instruments.js';
 
 export const SECTION_KINDS = [
   { id: 'intro', label: 'Intro', hint: 'Sets it up. Optional.' },
@@ -83,6 +84,10 @@ export function sectionSong(section) {
     stepsPerChord: music.stepsPerChord || 16,
     melody: music.melody || [],
     rhythm: section?.rhythm?.pattern || null,
+    // A section stores the *choice* of instrument, not the result, so one left
+    // on "from the seed" re-derives its own voices from its own seeds — which
+    // is why every section you roll turns up in a different colour.
+    instruments: resolveInstruments(music, section?.rhythm),
   };
 }
 

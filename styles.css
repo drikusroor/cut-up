@@ -437,8 +437,15 @@ details[open] summary { margin-bottom: 0.5rem; }
   font-size: 0.78rem;
   color: var(--ink-dim);
   text-align: right;
-  padding-right: 0.4rem;
+  padding: 0 0.4rem 0 0;
+  /* It is a button — clicking it auditions the piece — but it should read as
+     a row heading until you go near it. */
+  background: none;
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
 }
+.grid-row .label:hover { color: var(--accent); }
 
 .step {
   flex: 1 1 1.6rem;

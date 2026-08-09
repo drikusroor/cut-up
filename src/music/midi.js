@@ -2,6 +2,7 @@
 // straight into a DAW. No dependencies — MIDI is just bytes.
 
 import { arrange } from './arrange.js';
+import { harmonyInstrument, leadInstrument } from './instruments.js';
 
 const TICKS_PER_QUARTER = 480;
 const STEPS_PER_QUARTER = 4; // the app works on a sixteenth-note grid
@@ -32,7 +33,12 @@ function chunk(id, data) {
 
 /**
  * Turns notes into an MTrk chunk.
- * @param {{name?: string, channel?: number, tempo?: number, notes: Array<{midi:number, tick:number, durationTicks:number, velocity?:number}>}} track
+ *
+ * A note may carry a `program`; when it differs from the one before it, a
+ * program change goes in ahead of it. That is how a song whose sections use
+ * different instruments comes out of the export sounding like it did here.
+ *
+ * @param {{name?: string, channel?: number, tempo?: number, notes: Array<{midi:number, tick:number, durationTicks:number, velocity?:number, program?:number}>}} track
  */
 function trackChunk(track) {
   const { name, channel = 0, tempo, notes = [] } = track;
@@ -50,16 +56,24 @@ function trackChunk(track) {
     });
   }
 
-  for (const note of notes) {
+  let program = null;
+  // In tick order, so a program change lands ahead of the note that asked for
+  // it however the caller happened to build the list.
+  for (const note of [...notes].sort((a, b) => a.tick - b.tick)) {
     const midi = clamp(Math.round(note.midi), 0, 127);
     const velocity = clamp(Math.round(note.velocity ?? 96), 1, 127);
     const start = Math.max(0, Math.round(note.tick));
     const end = start + Math.max(1, Math.round(note.durationTicks));
-    events.push({ tick: start, order: 2, bytes: [0x90 | channel, midi, velocity] });
-    events.push({ tick: end, order: 1, bytes: [0x80 | channel, midi, 0] });
+    if (note.program != null && note.program !== program) {
+      program = note.program;
+      events.push({ tick: start, order: 1, bytes: [0xc0 | channel, clamp(Math.round(program), 0, 127)] });
+    }
+    events.push({ tick: start, order: 3, bytes: [0x90 | channel, midi, velocity] });
+    events.push({ tick: end, order: 2, bytes: [0x80 | channel, midi, 0] });
   }
 
-  // Note-offs go before note-ons at the same tick, so repeated notes retrigger.
+  // Note-offs go before note-ons at the same tick, so repeated notes retrigger,
+  // and a program change goes before both.
   events.sort((a, b) => a.tick - b.tick || a.order - b.order);
 
   const data = [];
@@ -112,7 +126,7 @@ export function stepToTicks(step, swing = 0) {
  * @returns {Uint8Array}
  */
 export function songToMidi(song) {
-  const { tempo = 100, swing = 0 } = song;
+  const { tempo = 100, swing = 0, instruments = {} } = song;
   // Same layout the audio engine plays, so the export is what you just heard.
   const { chords, melody, drums } = arrange(song);
 
@@ -121,12 +135,14 @@ export function songToMidi(song) {
   if (chords.length) {
     const notes = [];
     for (const chord of chords) {
+      const program = harmonyInstrument(chord.instrument || instruments.harmony).program;
       for (const midi of chord.voicing) {
         notes.push({
           midi,
           tick: stepToTicks(chord.step, 0),
           durationTicks: Math.max(1, chord.length * TICKS_PER_STEP - 10),
           velocity: 80,
+          program,
         });
       }
     }
@@ -142,6 +158,7 @@ export function songToMidi(song) {
         tick: stepToTicks(n.step, swing),
         durationTicks: Math.max(1, n.length * TICKS_PER_STEP - 8),
         velocity: n.velocity ?? 96,
+        program: leadInstrument(n.instrument || instruments.lead).program,
       })),
     });
   }

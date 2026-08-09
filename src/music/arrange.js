@@ -25,12 +25,13 @@ export function naturalSteps(song) {
  * @param {number} [song.stepsPerChord]
  * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.melody]
  * @param {{tracks: Array<{id:string, note:number, pattern:boolean[], velocities:number[]}>}} [song.rhythm]
+ * @param {{lead?:string, harmony?:string, kit?:string}} [song.instruments]
  * @param {number} [song.totalSteps] loop length; defaults to the longest part
  * @returns {{
  *   totalSteps: number,
- *   chords: Array<{voicing:number[], step:number, length:number}>,
- *   melody: Array<{midi:number, step:number, length:number, velocity?:number}>,
- *   drums: Array<{id:string, note:number, step:number, velocity:number}>,
+ *   chords: Array<{voicing:number[], step:number, length:number, instrument?:string}>,
+ *   melody: Array<{midi:number, step:number, length:number, velocity?:number, instrument?:string}>,
+ *   drums: Array<{id:string, note:number, step:number, velocity:number, kit?:string}>,
  * }}
  */
 export function arrange(song) {
@@ -41,6 +42,9 @@ export function arrange(song) {
     stepsPerChord = 16,
     melody = [],
     rhythm = null,
+    // Every event is tagged with the voice it should be played on, so a song
+    // strung together from sections can change instruments as it goes.
+    instruments = {},
   } = song || {};
 
   const chordSpan = chordVoicings.length * stepsPerChord;
@@ -59,6 +63,7 @@ export function arrange(song) {
         step,
         // A repeat that runs past the end of the loop gets clipped, not dropped.
         length: Math.min(stepsPerChord, totalSteps - step),
+        instrument: instruments.harmony,
       });
     }
   }
@@ -68,7 +73,12 @@ export function arrange(song) {
     for (const note of melody) {
       const step = offset + note.step;
       if (step >= totalSteps) continue;
-      melodyOut.push({ ...note, step, length: Math.min(note.length, totalSteps - step) });
+      melodyOut.push({
+        ...note,
+        step,
+        length: Math.min(note.length, totalSteps - step),
+        instrument: instruments.lead,
+      });
     }
   }
 
@@ -83,6 +93,7 @@ export function arrange(song) {
           note: track.note,
           step,
           velocity: track.velocities?.[index] || 100,
+          kit: instruments.kit,
         });
       });
     }
