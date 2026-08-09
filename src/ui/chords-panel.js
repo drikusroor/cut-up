@@ -1,6 +1,6 @@
 // The Chords & melody tab.
 
-import { $, bindSlider, copyText, el, fillSelect } from './dom.js';
+import { $, bindSlider, copyText, el, fillSelect, toast } from './dom.js';
 import { makeRng, randomSeed } from '../rng.js';
 import {
   chordSymbol,
@@ -12,9 +12,21 @@ import {
   SCALES,
   voiceProgression,
 } from '../music/theory.js';
-import { generateMelody, MELODY_SHAPES, MELODY_TRANSFORMS, transformMelody } from '../music/melody.js';
+import {
+  applyMelodyEdits,
+  EDIT_RANGE,
+  emptyMelodyEdits,
+  generateMelody,
+  isNullMove,
+  melodyEditCount,
+  MELODY_SHAPES,
+  MELODY_TRANSFORMS,
+  transformMelody,
+} from '../music/melody.js';
 
 const PERCENT = (v) => `${Math.round(Number(v) * 100)}%`;
+/** Grabbing this close to a note's right-hand edge resizes it instead. */
+const RESIZE_GRIP = 9;
 
 export function initChords(ctx) {
   const { state, save, audio } = ctx;
@@ -42,6 +54,9 @@ export function initChords(ctx) {
     melodySeed: $('#melody-seed'),
     newChordSeed: $('#new-chord-seed'),
     newMelodySeed: $('#new-melody-seed'),
+    undoEdit: $('#undo-melody-edit'),
+    resetEdits: $('#reset-melody-edits'),
+    editStatus: $('#melody-edit-status'),
   };
 
   const sliders = ['sevenths', 'spice'];
@@ -69,14 +84,6 @@ export function initChords(ctx) {
   fillSelect(ui.rangeLow, noteOptions, m.rangeLow);
   fillSelect(ui.rangeHigh, noteOptions, m.rangeHigh);
 
-  ui.length.value = m.length;
-  ui.barsPerChord.value = m.stepsPerChord;
-  // Before anything reads the controls, or the stored seeds look like blanks.
-  ui.chordSeed.value = m.chordSeed;
-  ui.melodySeed.value = m.melodySeed;
-  ui.own.value = m.ownChords;
-  for (const id of sliders) $(`#${id}`).value = m[id];
-  for (const [id, key] of melodySliders) $(`#${id}`).value = m[key];
   for (const id of sliders) bindSlider($(`#${id}`), $(`#out-${id}`), PERCENT);
   bindSlider($('#mel-density'), $('#out-density'), PERCENT);
   bindSlider($('#chordTones'), $('#out-chordTones'), PERCENT);
@@ -90,6 +97,27 @@ export function initChords(ctx) {
       onclick: () => applyTransform(t.id),
     }, [t.label])),
   );
+
+  /** Writes the stored settings back into the controls. */
+  function writeControls() {
+    ui.root.value = String(m.rootPc);
+    ui.scale.value = m.scaleId;
+    ui.mode.value = m.mode;
+    ui.own.value = m.ownChords;
+    ui.length.value = m.length;
+    ui.barsPerChord.value = String(m.stepsPerChord);
+    ui.shape.value = m.melodyShape;
+    ui.rangeLow.value = String(m.rangeLow);
+    ui.rangeHigh.value = String(m.rangeHigh);
+    // Before anything reads the controls, or the stored seeds look like blanks.
+    ui.chordSeed.value = m.chordSeed;
+    ui.melodySeed.value = m.melodySeed;
+    for (const id of sliders) $(`#${id}`).value = m[id];
+    for (const [id, key] of melodySliders) $(`#${id}`).value = m[key];
+    for (const input of [$('#sevenths'), $('#spice'), $('#mel-density'), $('#chordTones'), $('#restiness')]) {
+      input.dispatchEvent(new Event('input'));
+    }
+  }
 
   function syncMode() {
     const mode = PROGRESSION_MODES.find((p) => p.id === m.mode);
@@ -114,6 +142,8 @@ export function initChords(ctx) {
     for (const id of sliders) m[id] = Number($(`#${id}`).value);
     for (const [id, key] of melodySliders) m[key] = Number($(`#${id}`).value);
   }
+
+  const totalSteps = () => Math.max(16, m.chords.length * m.stepsPerChord);
 
   // --- generation -----------------------------------------------------------
 
@@ -157,7 +187,7 @@ export function initChords(ctx) {
     if (!m.chords.length) return;
     if (newSeed) m.melodySeed = randomSeed();
     ui.melodySeed.value = m.melodySeed;
-    m.melody = generateMelody({
+    m.melodyBase = generateMelody({
       rng: makeRng(`melody:${m.melodySeed}`),
       chords: m.chords,
       rootPc: m.rootPc,
@@ -169,20 +199,77 @@ export function initChords(ctx) {
       shape: m.melodyShape,
       range: [m.rangeLow, m.rangeHigh],
     });
+    // A fresh line is a fresh set of notes; deltas aimed at the old ones would
+    // land on strangers, so the ledger goes with them.
+    discardEdits();
+    refreshMelody();
     renderRoll();
     save();
   }
 
   function applyTransform(id) {
-    if (!m.melody.length) return;
-    m.melody = transformMelody(m.melody, id, {
+    if (!m.melodyBase.length) return;
+    // Transforms are the machine's move, so they rewrite the base. Note ids
+    // survive them, which means your hand edits ride along on top.
+    m.melodyBase = transformMelody(m.melodyBase, id, {
       rng: makeRng(`transform:${randomSeed()}`),
-      totalSteps: m.chords.length * m.stepsPerChord,
+      totalSteps: totalSteps(),
       stepsPerBar: m.stepsPerChord,
       range: [m.rangeLow, m.rangeHigh],
     });
+    refreshMelody();
     renderRoll();
     save();
+  }
+
+  // --- hand edits -----------------------------------------------------------
+
+  const undoStack = [];
+  let addCounter = 0;
+
+  function refreshMelody() {
+    m.melody = applyMelodyEdits(m.melodyBase, m.melodyEdits, {
+      totalSteps: totalSteps(),
+      range: EDIT_RANGE,
+    });
+    renderEditStatus();
+  }
+
+  function pushUndo() {
+    undoStack.push(JSON.stringify(m.melodyEdits));
+    if (undoStack.length > 60) undoStack.shift();
+  }
+
+  function discardEdits() {
+    m.melodyEdits = emptyMelodyEdits();
+    undoStack.length = 0;
+  }
+
+  function renderEditStatus() {
+    const count = melodyEditCount(m.melodyEdits);
+    ui.editStatus.textContent = count
+      ? `${count} hand-edited note${count === 1 ? '' : 's'} on top of the generated line`
+      : 'Straight from the generator — drag a note to change it.';
+    ui.resetEdits.disabled = count === 0;
+    ui.undoEdit.disabled = undoStack.length === 0;
+  }
+
+  function undoEdit() {
+    if (!undoStack.length) return;
+    m.melodyEdits = JSON.parse(undoStack.pop());
+    refreshMelody();
+    renderRoll();
+    save();
+  }
+
+  function resetEdits() {
+    if (!melodyEditCount(m.melodyEdits)) return;
+    pushUndo();
+    m.melodyEdits = emptyMelodyEdits();
+    refreshMelody();
+    renderRoll();
+    save();
+    toast('Back to the generated melody');
   }
 
   // --- rendering ------------------------------------------------------------
@@ -220,34 +307,60 @@ export function initChords(ctx) {
     );
   }
 
+  // The roll's geometry, kept around between frames because the pointer
+  // handlers need to turn an (x, y) back into a step and a MIDI note. It is
+  // frozen while you drag, so the view cannot shift under your own hand.
+  let view = null;
+
+  function measure() {
+    const width = ui.roll.clientWidth || 640;
+    const steps = totalSteps();
+    const pitches = [
+      ...m.melody.map((n) => n.midi),
+      ...m.melodyBase.map((n) => n.midi),
+      ...m.voicings.flat(),
+      m.rangeLow,
+      m.rangeHigh,
+    ].filter(Number.isFinite);
+    const low = (pitches.length ? Math.min(...pitches) : 60) - 2;
+    const high = (pitches.length ? Math.max(...pitches) : 84) + 2;
+    const rows = Math.max(1, high - low + 1);
+    // Rows have to stay thick enough to hit with a finger, but the whole roll
+    // has to stay a sensible height on screen, so meet in the middle.
+    const rowHeight = Math.max(8, Math.min(18, 380 / rows));
+    return {
+      width,
+      height: Math.max(200, Math.round(rows * rowHeight)),
+      low,
+      high,
+      rows,
+      rowHeight,
+      steps,
+      stepWidth: width / steps,
+    };
+  }
+
   function renderRoll() {
+    if (!view || !view.frozen) view = measure();
+    const {
+      width, height, low, high, rowHeight, stepWidth, steps,
+    } = view;
+
     const canvas = ui.roll;
     const dpr = window.devicePixelRatio || 1;
-    const width = canvas.clientWidth || 640;
-    const height = 260;
     canvas.width = width * dpr;
     canvas.height = height * dpr;
+    canvas.style.height = `${height}px`;
     const g = canvas.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, width, height);
 
-    const totalSteps = Math.max(1, m.chords.length * m.stepsPerChord);
     if (!m.melody.length && !m.chords.length) {
       g.fillStyle = '#6d685c';
       g.font = '13px system-ui, sans-serif';
       g.fillText('No melody yet.', 12, 24);
       return;
     }
-
-    const pitches = [
-      ...m.melody.map((n) => n.midi),
-      ...(m.voicings.flat().length ? m.voicings.flat() : [m.rangeLow, m.rangeHigh]),
-    ];
-    const low = Math.min(...pitches) - 2;
-    const high = Math.max(...pitches) + 2;
-    const rows = Math.max(1, high - low + 1);
-    const rowHeight = height / rows;
-    const stepWidth = width / totalSteps;
 
     // Root-note rows, so the shape is readable against the key.
     for (let midi = low; midi <= high; midi++) {
@@ -261,27 +374,65 @@ export function initChords(ctx) {
     m.voicings.forEach((voicing, index) => {
       for (const midi of voicing) {
         if (midi < low || midi > high) continue;
-        g.fillRect(index * m.stepsPerChord * stepWidth + 1, (high - midi) * rowHeight, m.stepsPerChord * stepWidth - 2, rowHeight - 1);
+        g.fillRect(
+          index * m.stepsPerChord * stepWidth + 1,
+          (high - midi) * rowHeight,
+          m.stepsPerChord * stepWidth - 2,
+          rowHeight - 1,
+        );
       }
     });
 
-    // Bar lines.
-    g.strokeStyle = 'rgba(255,255,255,0.12)';
+    // Beat lines, then heavier bar lines over them.
     g.lineWidth = 1;
-    for (let step = 0; step <= totalSteps; step += m.stepsPerChord) {
+    g.strokeStyle = 'rgba(255,255,255,0.05)';
+    for (let step = 0; step <= steps; step += 4) {
+      g.beginPath();
+      g.moveTo(step * stepWidth + 0.5, 0);
+      g.lineTo(step * stepWidth + 0.5, height);
+      g.stroke();
+    }
+    g.strokeStyle = 'rgba(255,255,255,0.12)';
+    for (let step = 0; step <= steps; step += m.stepsPerChord) {
       g.beginPath();
       g.moveTo(step * stepWidth + 0.5, 0);
       g.lineTo(step * stepWidth + 0.5, height);
       g.stroke();
     }
 
-    // Notes.
+    // Ghosts: where the generator originally put the notes you have since moved
+    // or struck out. This is the whole point of keeping edits as deviations —
+    // you can always see how far you have drifted.
+    const { moves = {}, removed = [] } = m.melodyEdits || {};
+    const struck = new Set(removed);
+    g.strokeStyle = 'rgba(234, 230, 217, 0.3)';
+    g.setLineDash([3, 3]);
+    for (const note of m.melodyBase) {
+      if (!struck.has(note.id) && isNullMove(moves[note.id])) continue;
+      if (note.midi < low || note.midi > high) continue;
+      g.strokeRect(
+        note.step * stepWidth + 1.5,
+        (high - note.midi) * rowHeight + 1.5,
+        Math.max(3, note.length * stepWidth - 3),
+        Math.max(3, rowHeight - 3),
+      );
+    }
+    g.setLineDash([]);
+
+    // Notes. Edited ones wear a different colour so the deviations stand out.
     for (const note of m.melody) {
       const x = note.step * stepWidth;
       const y = (high - note.midi) * rowHeight;
-      g.fillStyle = '#e2543c';
-      roundRect(g, x + 1, y + 1, Math.max(3, note.length * stepWidth - 2), Math.max(3, rowHeight - 2), 2);
+      const w = Math.max(3, note.length * stepWidth - 2);
+      const h = Math.max(3, rowHeight - 2);
+      g.fillStyle = note.edited ? '#7fbf6a' : '#e2543c';
+      roundRect(g, x + 1, y + 1, w, h, 2);
       g.fill();
+      // A grip on the right-hand edge, so it looks like it can be stretched.
+      if (w > RESIZE_GRIP * 1.5) {
+        g.fillStyle = 'rgba(0,0,0,0.28)';
+        g.fillRect(x + 1 + w - 2.5, y + 2, 1.5, h - 2);
+      }
     }
   }
 
@@ -296,6 +447,172 @@ export function initChords(ctx) {
     g.closePath();
   }
 
+  // --- dragging notes -------------------------------------------------------
+
+  let drag = null;
+
+  function pointerAt(event) {
+    const rect = ui.roll.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
+  function midiAt(y) {
+    return view.high - Math.floor(y / view.rowHeight);
+  }
+
+  function noteAt(x, y) {
+    const midi = midiAt(y);
+    const step = x / view.stepWidth;
+    // Backwards, so the note drawn on top is the one you grab.
+    for (let i = m.melody.length - 1; i >= 0; i--) {
+      const note = m.melody[i];
+      if (note.midi === midi && step >= note.step && step < note.step + note.length) return note;
+    }
+    return null;
+  }
+
+  function moveOf(id) {
+    return { dMidi: 0, dStep: 0, dLength: 0, ...(m.melodyEdits.moves[id] || {}) };
+  }
+
+  /** Files a note as struck out — or drops it, if you drew it in yourself. */
+  function removeNote(note) {
+    pushUndo();
+    const added = m.melodyEdits.added;
+    const index = added.findIndex((n) => n.id === note.id);
+    if (index >= 0) {
+      added.splice(index, 1);
+      delete m.melodyEdits.moves[note.id];
+    } else {
+      m.melodyEdits.removed.push(note.id);
+    }
+    refreshMelody();
+    renderRoll();
+    save();
+  }
+
+  function addNote(x, y) {
+    const step = Math.max(0, Math.min(view.steps - 1, Math.floor(x / view.stepWidth)));
+    const midi = Math.max(EDIT_RANGE[0], Math.min(EDIT_RANGE[1], midiAt(y)));
+    pushUndo();
+    addCounter += 1;
+    m.melodyEdits.added.push({
+      id: `add${Date.now().toString(36)}${addCounter}`,
+      midi,
+      step,
+      length: Math.min(2, view.steps - step),
+      velocity: 96,
+    });
+    refreshMelody();
+    renderRoll();
+    save();
+    audio.preview(midi);
+  }
+
+  ui.roll.addEventListener('pointerdown', (event) => {
+    if (!view || event.button === 2) return;
+    const { x, y } = pointerAt(event);
+    const note = noteAt(x, y);
+
+    if (!note) {
+      // Empty canvas: a plain click does nothing (you are probably about to
+      // double-click), but a modified one draws a note straight in.
+      if (event.altKey || event.metaKey || event.shiftKey) addNote(x, y);
+      return;
+    }
+    if (event.altKey || event.metaKey) {
+      removeNote(note);
+      return;
+    }
+
+    const noteWidth = note.length * view.stepWidth;
+    const fromRight = (note.step + note.length) * view.stepWidth - x;
+    const mode = fromRight < Math.min(RESIZE_GRIP, noteWidth * 0.4) ? 'resize' : 'move';
+
+    view.frozen = true;
+    drag = {
+      id: note.id, mode, startX: x, startY: y, from: moveOf(note.id), midi: note.midi, dirty: false,
+    };
+    ui.roll.setPointerCapture(event.pointerId);
+    ui.roll.style.cursor = mode === 'resize' ? 'ew-resize' : 'grabbing';
+    event.preventDefault();
+  });
+
+  ui.roll.addEventListener('pointermove', (event) => {
+    if (!view) return;
+    const { x, y } = pointerAt(event);
+
+    if (!drag) {
+      const note = noteAt(x, y);
+      const fromRight = note ? (note.step + note.length) * view.stepWidth - x : Infinity;
+      ui.roll.style.cursor = !note ? 'default'
+        : (fromRight < Math.min(RESIZE_GRIP, note.length * view.stepWidth * 0.4) ? 'ew-resize' : 'grab');
+      return;
+    }
+
+    const dStep = Math.round((x - drag.startX) / view.stepWidth);
+    // Screen y grows downwards; pitch does not.
+    const dMidi = -Math.round((y - drag.startY) / view.rowHeight);
+    const next = drag.mode === 'resize'
+      ? { ...drag.from, dLength: drag.from.dLength + dStep }
+      : { ...drag.from, dStep: drag.from.dStep + dStep, dMidi: drag.from.dMidi + dMidi };
+
+    const current = m.melodyEdits.moves[drag.id];
+    if (current && current.dMidi === next.dMidi && current.dStep === next.dStep
+      && current.dLength === next.dLength) return;
+
+    // The undo entry is taken on the first real movement, so a click that turns
+    // out to be a click does not leave a step in the history.
+    if (!drag.dirty) {
+      pushUndo();
+      drag.dirty = true;
+    }
+    m.melodyEdits.moves[drag.id] = next;
+    refreshMelody();
+    renderRoll();
+
+    const landed = m.melody.find((n) => n.id === drag.id);
+    if (landed && landed.midi !== drag.midi) {
+      drag.midi = landed.midi;
+      audio.preview(landed.midi);
+    }
+  });
+
+  function endDrag(event) {
+    if (!drag) return;
+    // A drag that came back to where it started leaves no deviation behind.
+    if (isNullMove(m.melodyEdits.moves[drag.id])) delete m.melodyEdits.moves[drag.id];
+    drag = null;
+    view.frozen = false;
+    ui.roll.style.cursor = 'default';
+    if (event?.pointerId != null && ui.roll.hasPointerCapture(event.pointerId)) {
+      ui.roll.releasePointerCapture(event.pointerId);
+    }
+    refreshMelody();
+    renderRoll();
+    save();
+  }
+
+  ui.roll.addEventListener('pointerup', endDrag);
+  ui.roll.addEventListener('pointercancel', endDrag);
+
+  ui.roll.addEventListener('dblclick', (event) => {
+    if (!view) return;
+    const { x, y } = pointerAt(event);
+    if (noteAt(x, y)) return;
+    addNote(x, y);
+  });
+
+  // Right-click deletes, which is what every piano roll does.
+  ui.roll.addEventListener('contextmenu', (event) => {
+    if (!view) return;
+    const { x, y } = pointerAt(event);
+    const note = noteAt(x, y);
+    if (!note) return;
+    event.preventDefault();
+    removeNote(note);
+  });
+
   // --- events ---------------------------------------------------------------
 
   ui.genChords.addEventListener('click', () => generateChords({ newSeed: true }));
@@ -305,6 +622,8 @@ export function initChords(ctx) {
     const flats = keyUsesFlats(m.rootPc, m.scaleId);
     copyText(m.chords.map((c) => chordSymbol(c, flats)).join(' | '), 'Progression copied');
   });
+  ui.undoEdit.addEventListener('click', undoEdit);
+  ui.resetEdits.addEventListener('click', resetEdits);
 
   for (const id of ['root', 'scale', 'prog-length', 'bars-per-chord', 'sevenths', 'spice']) {
     $(`#${id}`).addEventListener('change', () => generateChords({ newSeed: false }));
@@ -320,14 +639,24 @@ export function initChords(ctx) {
   ui.newChordSeed.addEventListener('click', () => generateChords({ newSeed: true }));
   ui.newMelodySeed.addEventListener('click', () => generateMelodyLine({ newSeed: true }));
 
+  document.addEventListener('keydown', (event) => {
+    if (state.tab !== 'chords' || !(event.ctrlKey || event.metaKey) || event.key !== 'z') return;
+    const tag = event.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || event.target.isContentEditable) return;
+    event.preventDefault();
+    undoEdit();
+  });
+
   window.addEventListener('resize', () => renderRoll());
 
   // --- boot -----------------------------------------------------------------
 
+  writeControls();
   syncMode();
   if (m.chords.length) {
     m.voicings = voiceProgression(m.chords, { octave: 3 });
     renderChords();
+    refreshMelody();
     renderRoll();
   } else {
     generateChords({ newSeed: true });
@@ -346,5 +675,18 @@ export function initChords(ctx) {
       }
     },
     redraw: renderRoll,
+    /** New melody over the same chords — what forking a variation does. */
+    rerollMelody: () => generateMelodyLine({ newSeed: true }),
+    /** Re-reads state.music after a section has been loaded over it. */
+    applyState() {
+      undoStack.length = 0;
+      writeControls();
+      syncMode();
+      m.voicings = m.chords.length ? voiceProgression(m.chords, { octave: 3 }) : [];
+      renderChords();
+      refreshMelody();
+      view = null;
+      renderRoll();
+    },
   };
 }
