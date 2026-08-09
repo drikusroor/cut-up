@@ -9,6 +9,7 @@ import { AudioEngine } from './music/audio.js';
 import { songToMidi } from './music/midi.js';
 import { buildSongPlan } from './music/sections.js';
 import { emptyMelodyEdits } from './music/melody.js';
+import { AUTO, resolveInstruments } from './music/instruments.js';
 import { randomSeed } from './rng.js';
 
 const STORAGE_KEY = 'cut-up:v1';
@@ -66,6 +67,9 @@ function defaultState() {
       restiness: 0.2,
       rangeLow: 60,
       rangeHigh: 84,
+      // 'auto' means "whatever the seed says", so a new roll is a new sound.
+      leadInstrument: AUTO,
+      harmonyInstrument: AUTO,
     },
     rhythm: {
       style: 'euclid',
@@ -74,6 +78,7 @@ function defaultState() {
       density: 0.5,
       variation: 0.25,
       trackIds: ['kick', 'snare', 'hat'],
+      kit: AUTO,
       seed: '',
       pattern: null,
     },
@@ -126,7 +131,15 @@ function save() {
 }
 
 const audio = new AudioEngine();
-const ctx = { state, save, audio };
+const ctx = {
+  state,
+  save,
+  audio,
+  // Clicking a chord card or dragging a note plays a single sound with no song
+  // around it, so the engine has to be told what the current voices are.
+  syncInstruments: () => audio.setInstruments(resolveInstruments(state.music, state.rhythm)),
+};
+ctx.syncInstruments();
 
 // --- panels -----------------------------------------------------------------
 
@@ -203,6 +216,7 @@ function buildLoop() {
     stepsPerChord: m.stepsPerChord,
     melody: m.melody,
     rhythm: state.rhythm.pattern,
+    instruments: resolveInstruments(m, state.rhythm),
     // Loop over whichever part is longest; the shorter ones repeat to fill it.
     totalSteps: Math.max(totalChordSteps, drumSteps, melodySteps, 16),
   };
@@ -249,6 +263,7 @@ let playbackScope = 'loop';
 
 function startPlayback(options) {
   playbackScope = options?.scope || (state.tab === 'song' ? 'song' : 'loop');
+  ctx.syncInstruments();
   audio.play(buildSong({ scope: playbackScope }));
 }
 
@@ -274,6 +289,10 @@ function renderPlayScope() {
     : 'No arrangement yet — looping what you have open';
 }
 
+/** For changes that alter the sound without altering a note. */
+ctx.refreshPlayback = () => {
+  if (audio.playing) startPlayback({ scope: playbackScope });
+};
 ctx.playSong = () => startPlayback({ scope: 'song' });
 ctx.exportSong = () => exportMidi({ scope: 'song' });
 ctx.onSongChange = () => {

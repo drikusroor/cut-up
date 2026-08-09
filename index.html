@@ -213,6 +213,30 @@
       </fieldset>
 
       <fieldset>
+        <legend>Sound</legend>
+        <div class="field">
+          <span>Melody instrument</span>
+          <div class="row">
+            <select id="lead-instrument" class="grow"></select>
+            <button type="button" class="btn ghost" id="hear-lead" title="Hear it">▶</button>
+          </div>
+          <small id="lead-hint" class="hint"></small>
+        </div>
+        <div class="field">
+          <span>Harmony instrument</span>
+          <div class="row">
+            <select id="harmony-instrument" class="grow"></select>
+            <button type="button" class="btn ghost" id="hear-harmony" title="Hear it">▶</button>
+          </div>
+          <small id="harmony-hint" class="hint"></small>
+        </div>
+        <small class="hint">
+          “From the seed” takes the instrument from the seed too, so every new progression or melody
+          arrives in a new voice — and typing the seed back in brings that voice back with it.
+        </small>
+      </fieldset>
+
+      <fieldset>
         <legend>Seeds</legend>
         <div class="field">
           <span>Progression</span>
@@ -297,7 +321,16 @@
 
       <fieldset>
         <legend>Kit</legend>
+        <div class="field">
+          <span>Kit sound</span>
+          <div class="row">
+            <select id="drum-kit" class="grow"></select>
+            <button type="button" class="btn ghost" id="surprise-kit" title="Pick a random set of pieces">🎲</button>
+          </div>
+          <small id="kit-hint" class="hint"></small>
+        </div>
         <div class="checks" id="track-picker"></div>
+        <small class="hint">The dice pick a whole kit at random. Click a row's name in the grid to hear that piece.</small>
       </fieldset>
 
       <fieldset>

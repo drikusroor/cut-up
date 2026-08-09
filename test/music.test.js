@@ -12,7 +12,28 @@ import {
   scalePitchClasses,
   voiceProgression,
 } from '../src/music/theory.js';
-import { cutUpPattern, euclidean, generateRhythm, stepTime } from '../src/music/rhythm.js';
+import {
+  cutUpPattern,
+  euclidean,
+  generateRhythm,
+  randomKitPieces,
+  stepTime,
+  TRACKS,
+  trackRole,
+} from '../src/music/rhythm.js';
+import {
+  AUTO,
+  DRUM_KITS,
+  drumKit,
+  HARMONY_INSTRUMENTS,
+  harmonyInstrument,
+  instrumentOptions,
+  LEAD_INSTRUMENTS,
+  leadInstrument,
+  resolveInstruments,
+  resolveKit,
+  resolveLead,
+} from '../src/music/instruments.js';
 import {
   applyMelodyEdits,
   emptyMelodyEdits,
@@ -27,6 +48,7 @@ import {
   forkSection,
   makeSection,
   nextSectionName,
+  sectionSong,
   sectionSteps,
 } from '../src/music/sections.js';
 import { buildMidiFile, songToMidi, stepToTicks, writeVarInt } from '../src/music/midi.js';
@@ -159,6 +181,72 @@ test('generateRhythm produces one pattern per requested track', () => {
     });
   }
   assert.equal(kit.tracks[0].pattern[0], true, 'the kick should land on the downbeat');
+});
+
+test('every kit piece has a role the generator knows how to write for', () => {
+  const known = new Set(['low', 'backbeat', 'hats', 'offbeat', 'perc', 'clave', 'fill', 'accent']);
+  const notes = new Set();
+  for (const track of TRACKS) {
+    assert.ok(known.has(track.role), `${track.id} has an unknown role: ${track.role}`);
+    assert.ok(track.note >= 35 && track.note <= 81, `${track.id} is outside the GM drum map`);
+    assert.equal(notes.has(track.note), false, `${track.id} reuses a drum note`);
+    notes.add(track.note);
+  }
+  assert.equal(trackRole('kick'), 'low');
+  // Anything the generator has never heard of still gets a part rather than
+  // an exception.
+  assert.equal(trackRole('kazoo'), 'perc');
+});
+
+test('the whole kit generates, whatever the style', () => {
+  const trackIds = TRACKS.map((t) => t.id);
+  for (const style of ['euclid', 'backbeat', 'chance', 'cutup', 'polyrhythm']) {
+    const kit = generateRhythm({
+      rng: makeRng(`kit:${style}`), steps: 16, bars: 2, style, density: 0.6, trackIds,
+    });
+    assert.deepEqual(kit.tracks.map((t) => t.id), trackIds, style);
+    for (const track of kit.tracks) {
+      assert.equal(track.pattern.length, 32, `${track.id}/${style}`);
+      assert.equal(track.velocities.length, 32);
+      assert.equal(track.pattern.every((on) => typeof on === 'boolean'), true);
+    }
+  }
+});
+
+test('a crash lands at the top of the phrase and a tom fill at the bottom', () => {
+  const kit = generateRhythm({
+    rng: makeRng('phrase'), steps: 16, bars: 2, density: 0.6, trackIds: ['crash', 'tom'],
+  });
+  const crash = kit.tracks.find((t) => t.id === 'crash');
+  const tom = kit.tracks.find((t) => t.id === 'tom');
+  // One hit, on the downbeat of bar one — not once a bar, which is what you get
+  // if a cymbal is generated like a hi-hat.
+  assert.deepEqual(crash.pattern.map(Number).join(''), '1'.padEnd(32, '0'));
+  assert.equal(tom.pattern.slice(0, 16).some(Boolean), false, 'the fill waits for the last bar');
+  assert.equal(tom.pattern.slice(16).some(Boolean), true);
+});
+
+test('the clave plays a clave rather than a euclidean guess', () => {
+  const [clave] = generateRhythm({
+    rng: makeRng('son'), steps: 16, bars: 1, density: 0.5, trackIds: ['clave'],
+  }).tracks;
+  const hits = clave.pattern.flatMap((on, i) => (on ? [i] : []));
+  assert.deepEqual(hits, [0, 3, 6, 10, 12], '3-2 son clave');
+});
+
+test('a random kit is always playable', () => {
+  const ids = new Set(TRACKS.map((t) => t.id));
+  for (let seed = 0; seed < 40; seed++) {
+    const kit = randomKitPieces(makeRng(`kit:${seed}`));
+    assert.ok(kit.includes('kick'), 'there is always a kick');
+    assert.ok(kit.some((id) => ['snare', 'clap'].includes(id)), 'and always a backbeat');
+    assert.ok(kit.some((id) => ['hat', 'ride', 'shaker'].includes(id)), 'and always a timekeeper');
+    assert.equal(new Set(kit).size, kit.length, 'no piece twice');
+    for (const id of kit) assert.ok(ids.has(id), `${id} is not in the kit`);
+    // Kit order, not pick order, so the grid does not reshuffle itself.
+    const order = kit.map((id) => TRACKS.findIndex((t) => t.id === id));
+    assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  }
 });
 
 test('swing delays every other step only', () => {
@@ -325,17 +413,80 @@ test('hand edits survive a transform, because the notes keep their ids', () => {
   assert.equal(moved.step, 0, 'and it lands where the transform put it');
 });
 
+// --- instruments -------------------------------------------------------------
+
+test('every voice is a recipe the engine can actually build', () => {
+  for (const [kind, list] of [['lead', LEAD_INSTRUMENTS], ['harmony', HARMONY_INSTRUMENTS]]) {
+    assert.equal(new Set(list.map((i) => i.id)).size, list.length, `${kind} ids must be unique`);
+    for (const voice of list) {
+      assert.ok(voice.label && voice.hint, `${voice.id} needs a label and a hint`);
+      assert.ok(voice.program >= 0 && voice.program <= 127, `${voice.id} has no GM program`);
+      assert.ok(voice.partials.length > 0, `${voice.id} has nothing to make a sound with`);
+      for (const partial of voice.partials) {
+        assert.ok((partial.ratio ?? 1) > 0, `${voice.id} has a partial at zero`);
+        assert.ok((partial.level ?? 1) > 0);
+      }
+      const env = voice.env;
+      assert.ok(env.attack >= 0 && env.decay > 0 && env.release > 0, `${voice.id} envelope`);
+      assert.ok(env.sustain >= 0 && env.sustain <= 1, `${voice.id} sustain`);
+      assert.ok(voice.filter.from > 0, `${voice.id} filter`);
+    }
+  }
+  for (const kit of DRUM_KITS) {
+    assert.ok(kit.pitch > 0 && kit.decay > 0 && kit.tone > 0 && kit.gain > 0, kit.id);
+  }
+});
+
+test('an instrument left on auto comes from the seed, and comes back with it', () => {
+  const first = resolveLead(AUTO, 'ember-42');
+  assert.equal(resolveLead(AUTO, 'ember-42'), first, 'the same seed gives the same voice');
+  assert.ok(LEAD_INSTRUMENTS.some((i) => i.id === first));
+  // Over a spread of seeds it has to actually spread, or "surprise me" is a lie.
+  const seen = new Set(Array.from({ length: 60 }, (_, i) => resolveLead(AUTO, `seed-${i}`)));
+  assert.ok(seen.size > 3, `only ${seen.size} voices across 60 seeds`);
+});
+
+test('a pinned instrument beats the seed, and nonsense falls back to it', () => {
+  assert.equal(resolveLead('bell', 'anything'), 'bell');
+  assert.equal(resolveKit('808', 'anything'), '808');
+  // A section saved before an instrument was renamed must still play.
+  assert.equal(resolveLead('theremin', 'x'), resolveLead(AUTO, 'x'));
+  assert.equal(leadInstrument('theremin').id, LEAD_INSTRUMENTS[0].id);
+  assert.equal(harmonyInstrument(undefined).id, HARMONY_INSTRUMENTS[0].id);
+  assert.equal(drumKit('nope').id, DRUM_KITS[0].id);
+});
+
+test('the three voices of a piece of music are resolved together', () => {
+  const sound = resolveInstruments(
+    { leadInstrument: 'flute', harmonyInstrument: AUTO, chordSeed: 'abc', melodySeed: 'def' },
+    { kit: '909', seed: 'ghi' },
+  );
+  assert.equal(sound.lead, 'flute');
+  assert.equal(sound.kit, '909');
+  assert.equal(sound.harmony, resolveInstruments({ harmonyInstrument: AUTO, chordSeed: 'abc' }).harmony);
+  // Missing state is a blank slate, not a crash.
+  assert.ok(resolveInstruments().lead);
+});
+
+test('the instrument picker offers "from the seed" first', () => {
+  const options = instrumentOptions(LEAD_INSTRUMENTS);
+  assert.equal(options[0].value, AUTO);
+  assert.equal(options.length, LEAD_INSTRUMENTS.length + 1);
+});
+
 // --- sections ---------------------------------------------------------------
 
-function testSection(name, chordText, { kind = 'main', melody = [], stepsPerChord = 16 } = {}) {
+function testSection(name, chordText, {
+  kind = 'main', melody = [], stepsPerChord = 16, music = {}, rhythm = { pattern: null },
+} = {}) {
   const chords = parseChords(chordText);
   return makeSection({
     name,
     kind,
     music: {
-      chords, voicings: voiceProgression(chords, { octave: 3 }), stepsPerChord, melody,
+      chords, voicings: voiceProgression(chords, { octave: 3 }), stepsPerChord, melody, ...music,
     },
-    rhythm: { pattern: null },
+    rhythm,
   });
 }
 
@@ -424,9 +575,138 @@ test('a section carries its own kit, so the drums change with the section', () =
   assert.equal(drums.every((hit) => hit.step < 32), true, 'and B, which has none, stays dry');
 });
 
+test('a section carries its own voices, and they travel with it into the song', () => {
+  const kick = (seed) => generateRhythm({ rng: makeRng(seed), steps: 16, bars: 1, trackIds: ['kick'] });
+  const a = testSection('A', 'Am F', {
+    melody: [{ midi: 72, step: 0, length: 4 }],
+    music: { leadInstrument: 'bell', harmonyInstrument: 'organ' },
+    rhythm: { kit: '808', pattern: kick('a') },
+  });
+  const b = testSection('B', 'C G', {
+    melody: [{ midi: 60, step: 0, length: 4 }],
+    music: { leadInstrument: 'flute', harmonyInstrument: 'strings' },
+    rhythm: { kit: 'toybox', pattern: kick('b') },
+  });
+  assert.deepEqual(sectionSong(a).instruments, { lead: 'bell', harmony: 'organ', kit: '808' });
+
+  const plan = buildSongPlan([a, b], [{ sectionId: a.id }, { sectionId: b.id }]);
+  const laid = arrange({ sections: plan.blocks.map((x) => x.song) });
+  assert.deepEqual(laid.melody.map((n) => n.instrument), ['bell', 'flute']);
+  assert.deepEqual([...new Set(laid.chords.map((c) => c.instrument))], ['organ', 'strings']);
+  assert.deepEqual([...new Set(laid.drums.map((h) => h.kit))], ['808', 'toybox']);
+});
+
+test('a section left on auto re-derives its voices from its own seeds', () => {
+  const a = testSection('A', 'Am F', { music: { chordSeed: 'one', melodySeed: 'two' } });
+  const b = testSection('B', 'Am F', { music: { chordSeed: 'three', melodySeed: 'four' } });
+  assert.deepEqual(sectionSong(a).instruments, resolveInstruments(a.music, a.rhythm));
+  // Two ideas rolled separately should not both come out as a saw lead.
+  const sounds = new Set([sectionSong(a).instruments.lead, sectionSong(b).instruments.lead]);
+  assert.ok(sounds.size >= 1);
+  assert.deepEqual(sectionSong(a).instruments, sectionSong(a).instruments);
+});
+
 // --- midi -------------------------------------------------------------------
 
+/**
+ * Walks a MIDI file back into tracks of events. The writer never uses running
+ * status, so this stays short — and it beats hunting for bytes in a haystack.
+ */
+function readMidi(bytes) {
+  const data = [...bytes];
+  const tracks = [];
+  let at = 14; // an MThd chunk is always 8 header bytes plus 6 of payload
+  while (at < data.length) {
+    const length = (data[at + 4] << 24) | (data[at + 5] << 16) | (data[at + 6] << 8) | data[at + 7];
+    const body = data.slice(at + 8, at + 8 + length);
+    at += 8 + length;
+
+    const events = [];
+    let i = 0;
+    let tick = 0;
+    const varInt = () => {
+      let value = 0;
+      while (body[i] & 0x80) {
+        value = (value << 7) | (body[i] & 0x7f);
+        i += 1;
+      }
+      value = (value << 7) | body[i];
+      i += 1;
+      return value;
+    };
+
+    while (i < body.length) {
+      tick += varInt();
+      const status = body[i];
+      i += 1;
+      if (status === 0xff) {
+        const type = body[i];
+        i += 1;
+        const size = varInt();
+        events.push({ tick, status, type, data: body.slice(i, i + size) });
+        i += size;
+      } else {
+        // Program change and channel pressure take one data byte; the rest two.
+        const size = (status & 0xf0) === 0xc0 || (status & 0xf0) === 0xd0 ? 1 : 2;
+        events.push({ tick, status, data: body.slice(i, i + size) });
+        i += size;
+      }
+    }
+    tracks.push(events);
+  }
+  return tracks;
+}
+
+const programChanges = (events) => events.filter((e) => (e.status & 0xf0) === 0xc0);
+
+test('an export opens on the instruments it was played with', () => {
+  const bytes = songToMidi({
+    tempo: 100,
+    chordVoicings: voiceProgression(parseChords('Am F'), { octave: 3 }),
+    stepsPerChord: 16,
+    melody: [{ midi: 72, step: 0, length: 4, velocity: 100 }],
+    instruments: { lead: 'bell', harmony: 'rhodes' },
+  });
+  // One program change per part, not one per note.
+  assert.deepEqual(
+    programChanges(readMidi(bytes).flat()).map((e) => [e.status & 0x0f, e.data[0]]),
+    [[0, harmonyInstrument('rhodes').program], [1, leadInstrument('bell').program]],
+  );
+});
+
+test('a song that changes voice between sections changes program mid-track', () => {
+  const a = testSection('A', 'Am F', {
+    melody: [{ midi: 72, step: 0, length: 4 }], music: { leadInstrument: 'bell' },
+  });
+  const b = testSection('B', 'C G', {
+    melody: [{ midi: 60, step: 0, length: 4 }], music: { leadInstrument: 'flute' },
+  });
+  const plan = buildSongPlan([a, b], [{ sectionId: a.id }, { sectionId: b.id }]);
+  const bytes = songToMidi({ tempo: 100, sections: plan.blocks.map((x) => x.song) });
+
+  const melody = readMidi(bytes).find((events) => events.some((e) => e.status === 0x91));
+  assert.deepEqual(programChanges(melody).map((e) => [e.tick, e.data[0]]), [
+    [0, leadInstrument('bell').program],
+    [stepToTicks(32), leadInstrument('flute').program],
+  ]);
+  // And each one arrives before the note that asked for it.
+  assert.ok(melody.indexOf(programChanges(melody)[0]) < melody.findIndex((e) => e.status === 0x91));
+});
+
 // --- arrangement ------------------------------------------------------------
+
+test('a loop tags every event with the voice it is played on', () => {
+  const laid = arrange({
+    chordVoicings: voiceProgression(parseChords('Am F'), { octave: 3 }),
+    stepsPerChord: 16,
+    melody: [{ midi: 72, step: 0, length: 4 }],
+    rhythm: generateRhythm({ rng: makeRng('r'), steps: 16, bars: 1, trackIds: ['kick'] }),
+    instruments: { lead: 'pluck', harmony: 'rhodes', kit: 'tape' },
+  });
+  assert.ok(laid.chords.length && laid.chords.every((c) => c.instrument === 'rhodes'));
+  assert.ok(laid.melody.length && laid.melody.every((n) => n.instrument === 'pluck'));
+  assert.ok(laid.drums.length && laid.drums.every((h) => h.kit === 'tape'));
+});
 
 test('a short drum pattern repeats under a longer progression', () => {
   const rhythm = generateRhythm({ rng: makeRng('r'), steps: 16, bars: 2, trackIds: ['kick'] });

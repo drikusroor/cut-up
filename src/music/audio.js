@@ -1,8 +1,46 @@
 // Web Audio playback. Everything is synthesised on the fly — no samples, so
 // the whole app stays a handful of text files.
+//
+// There is one voice builder here, and it is driven entirely by the recipes in
+// instruments.js: oscillators, an envelope, a filter, optionally a modulator or
+// a puff of noise. Adding an instrument means adding data, not code. Drums are
+// the same idea with a smaller vocabulary — a table of pieces, and a kit that
+// tunes and stretches all of them at once.
 
 import { arrange } from './arrange.js';
 import { stepTime } from './rhythm.js';
+import { drumKit, harmonyInstrument, leadInstrument } from './instruments.js';
+
+/**
+ * How each kit piece is made. `kind` picks the renderer:
+ *   tonal  a pitched body with a downward sweep — kicks, toms, congas
+ *   noise  filtered noise, with an optional pitched body under it — snare, shaker
+ *   clap   three noise bursts in quick succession
+ *   metal  six detuned squares through a highpass — the 808 cymbal trick
+ *   bell   a couple of squares through a bandpass — cowbell, triangle
+ *   wood   a very short click plus a tick of noise — rim, block, clave
+ */
+const DRUM_VOICES = {
+  kick: { kind: 'tonal', type: 'sine', from: 140, to: 45, sweep: 0.09, decay: 0.32, level: 1 },
+  tom: { kind: 'tonal', type: 'sine', from: 220, to: 121, sweep: 0.12, decay: 0.28, level: 0.7 },
+  conga: { kind: 'tonal', type: 'sine', from: 340, to: 250, sweep: 0.06, decay: 0.18, level: 0.6 },
+  snare: { kind: 'noise', band: 1900, q: 0.9, decay: 0.19, level: 0.7, body: 190, bodyLevel: 0.25, bodyDecay: 0.12 },
+  shaker: { kind: 'noise', band: 6200, q: 1.2, decay: 0.06, level: 0.34, attack: 0.008 },
+  clap: { kind: 'clap', band: 1400, q: 1.6, decay: 0.19, level: 0.75 },
+  hat: { kind: 'metal', base: 320, high: 7000, decay: 0.045, level: 0.38 },
+  openhat: { kind: 'metal', base: 320, high: 7000, decay: 0.28, level: 0.34 },
+  ride: { kind: 'metal', base: 280, high: 5200, decay: 0.9, level: 0.26, ping: 1400 },
+  crash: { kind: 'metal', base: 240, high: 3600, decay: 1.6, level: 0.28, noise: 0.5 },
+  tamb: { kind: 'metal', base: 520, high: 8200, decay: 0.12, level: 0.28, noise: 0.6 },
+  cowbell: { kind: 'bell', partials: [540, 800], band: 2600, decay: 0.32, level: 0.4 },
+  triangle: { kind: 'bell', partials: [4200, 5300, 6900], band: 6000, decay: 1.1, level: 0.2, type: 'sine' },
+  rim: { kind: 'wood', from: 1700, to: 900, decay: 0.05, level: 0.4, noise: 0.5, band: 2600 },
+  woodblock: { kind: 'wood', from: 1200, to: 1050, decay: 0.06, level: 0.4, noise: 0.25, band: 2200 },
+  clave: { kind: 'wood', from: 2500, to: 2350, decay: 0.05, level: 0.4, noise: 0.15, band: 3200 },
+};
+
+/** The 808's six-oscillator cymbal, as frequency ratios off a base. */
+const METAL_RATIOS = [1, 1.4471, 1.6171, 1.9265, 2.5028, 2.6637];
 
 export class AudioEngine {
   constructor() {
@@ -14,6 +52,9 @@ export class AudioEngine {
     this.loopSeconds = 0;
     this.secondsPerStep = 0;
     this.voices = [];
+    // What a one-off preview should sound like. Playback carries its own
+    // instruments per note, but a click on a chord card has no note to ask.
+    this.instruments = { lead: 'saw', harmony: 'pad', kit: 'studio' };
   }
 
   /** Browsers only allow this after a user gesture, so call it from a click. */
@@ -30,6 +71,11 @@ export class AudioEngine {
     }
     if (this.ctx.state === 'suspended') this.ctx.resume();
     return this.ctx;
+  }
+
+  /** Keeps previews in step with whatever the panels currently have selected. */
+  setInstruments(instruments) {
+    this.instruments = { ...this.instruments, ...instruments };
   }
 
   get currentStep() {
@@ -65,6 +111,7 @@ export class AudioEngine {
    * @param {number} [song.stepsPerChord]
    * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.melody]
    * @param {{tracks: Array<{id:string, pattern:boolean[], velocities:number[]}>}} [song.rhythm]
+   * @param {{lead?:string, harmony?:string, kit?:string}} [song.instruments]
    * @param {number} [song.totalSteps]
    * @param {boolean} [song.loop]
    * @param {{chords?:boolean, melody?:boolean, drums?:boolean}} [song.parts]
@@ -78,6 +125,7 @@ export class AudioEngine {
       swing = 0,
       loop = true,
       parts = { chords: true, melody: true, drums: true },
+      instruments = this.instruments,
     } = song;
 
     // Shorter parts repeat to fill the loop — see arrange().
@@ -91,17 +139,21 @@ export class AudioEngine {
     const schedule = (at) => {
       if (parts.chords) {
         for (const chord of chords) {
+          // Each note carries the instrument of the section it came from, so a
+          // song can change voice from one section to the next.
+          const spec = harmonyInstrument(chord.instrument || instruments.harmony);
           const time = at + chord.step * secondsPerStep;
           const duration = chord.length * secondsPerStep * 0.96;
           chord.voicing.forEach((midi, voice) => {
             // Tiny spread so the chord sounds strummed rather than stamped.
-            this.pad(midi, time + voice * 0.012, duration, 0.16);
+            this.voice(spec, midi, time + voice * (spec.spread ?? 0.012), duration, 0.16);
           });
         }
       }
       if (parts.melody) {
         for (const note of melody) {
-          this.lead(
+          this.voice(
+            leadInstrument(note.instrument || instruments.lead),
             note.midi,
             at + stepTime(note.step, secondsPerStep, swing),
             Math.max(0.08, note.length * secondsPerStep * 0.92),
@@ -112,7 +164,7 @@ export class AudioEngine {
       if (parts.drums) {
         for (const hit of drums) {
           const time = at + stepTime(hit.step, secondsPerStep, swing);
-          this.drum(hit.id, time, (hit.velocity / 127) * 0.7);
+          this.drum(hit.id, time, (hit.velocity / 127) * 0.7, hit.kit || instruments.kit);
         }
       }
     };
@@ -140,134 +192,290 @@ export class AudioEngine {
     }
   }
 
-  /** Warm sustained voice for chords. */
-  pad(midi, time, duration, gain = 0.15) {
+  /**
+   * Builds one note out of an instrument recipe. Every melodic sound in the app
+   * comes through here.
+   *
+   * @param {object} spec an entry from LEAD_INSTRUMENTS or HARMONY_INSTRUMENTS
+   * @param {number} midi
+   * @param {number} time when to start, in context time
+   * @param {number} duration how long the key is held, in seconds
+   * @param {number} gain
+   */
+  voice(spec, midi, time, duration, gain = 0.2) {
     const ctx = this.ctx;
+    const freq = mtof(midi);
+    const env = { attack: 0.01, decay: 0.2, sustain: 0.7, release: 0.1, ...(spec.env || {}) };
+    const level = gain * (spec.gain ?? 1);
+    // Long releases have to be given room to finish, or the note is cut off.
+    const tail = duration + env.release * 6 + 0.1;
+
     const out = ctx.createGain();
     out.gain.setValueAtTime(0, time);
-    out.gain.linearRampToValueAtTime(gain, time + 0.04);
-    out.gain.setTargetAtTime(gain * 0.7, time + 0.05, 0.4);
-    out.gain.setTargetAtTime(0.0001, time + duration, 0.12);
+    out.gain.linearRampToValueAtTime(level, time + env.attack);
+    out.gain.setTargetAtTime(level * env.sustain, time + env.attack, Math.max(0.005, env.decay));
+    out.gain.setTargetAtTime(0.0001, time + duration, Math.max(0.005, env.release));
+    out.connect(this.master);
 
+    const shape = spec.filter || { type: 'lowpass', from: 12000 };
     const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(1800, time);
-    filter.Q.value = 0.5;
+    filter.type = shape.type;
+    filter.Q.value = shape.q ?? 0.7;
+    filter.frequency.setValueAtTime(shape.from, time);
+    if (shape.to != null) {
+      filter.frequency.setTargetAtTime(shape.to, time + 0.01, Math.max(0.01, shape.time ?? 0.2));
+    }
+    filter.connect(out);
 
-    for (const [type, detune, level] of [['triangle', -4, 1], ['sine', 5, 0.7]]) {
+    // One LFO for the whole voice, so the partials wobble together.
+    let vibrato = null;
+    if (spec.vibrato) {
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = spec.vibrato.rate;
+      vibrato = ctx.createGain();
+      vibrato.gain.setValueAtTime(0, time);
+      vibrato.gain.linearRampToValueAtTime(spec.vibrato.depth, time + (spec.vibrato.delay ?? 0.2));
+      lfo.connect(vibrato);
+      lfo.start(time);
+      lfo.stop(time + tail);
+      this.voices.push(lfo);
+    }
+
+    for (const partial of spec.partials || [{ type: 'sine' }]) {
       const osc = ctx.createOscillator();
-      osc.type = type;
-      osc.frequency.value = mtof(midi);
-      osc.detune.value = detune;
-      const level_ = ctx.createGain();
-      level_.gain.value = level;
-      osc.connect(level_).connect(filter);
+      osc.type = partial.type || 'sine';
+      osc.frequency.value = freq * (partial.ratio ?? 1);
+      osc.detune.value = partial.detune ?? 0;
+      if (vibrato) vibrato.connect(osc.detune);
+
+      const mix = ctx.createGain();
+      if (partial.decay) {
+        // A partial that fades on its own is how a bell loses its overtones
+        // before its fundamental.
+        mix.gain.setValueAtTime(partial.level ?? 1, time);
+        mix.gain.setTargetAtTime(0.0001, time, partial.decay);
+      } else {
+        mix.gain.value = partial.level ?? 1;
+      }
+
+      if (partial.fm) {
+        const modulator = ctx.createOscillator();
+        modulator.frequency.value = osc.frequency.value * partial.fm.ratio;
+        const index = ctx.createGain();
+        index.gain.setValueAtTime(partial.fm.index, time);
+        if (partial.fm.decay) index.gain.setTargetAtTime(0.0001, time, partial.fm.decay);
+        modulator.connect(index).connect(osc.frequency);
+        modulator.start(time);
+        modulator.stop(time + tail);
+        this.voices.push(modulator);
+      }
+
+      osc.connect(mix).connect(filter);
       osc.start(time);
-      osc.stop(time + duration + 0.6);
+      osc.stop(time + tail);
       this.voices.push(osc);
     }
 
-    filter.connect(out).connect(this.master);
+    // Breath, pick noise, hammer — whatever the attack needs.
+    if (spec.noise) {
+      const noise = ctx.createBufferSource();
+      noise.buffer = this.noiseBuffer();
+      const band = ctx.createBiquadFilter();
+      band.type = spec.noise.type;
+      band.frequency.value = spec.noise.frequency;
+      const puff = ctx.createGain();
+      puff.gain.setValueAtTime(spec.noise.level, time);
+      puff.gain.setTargetAtTime(0.0001, time, spec.noise.decay);
+      noise.connect(band).connect(puff).connect(filter);
+      const noiseTail = Math.min(tail, spec.noise.decay * 8 + 0.05);
+      noise.start(time);
+      noise.stop(time + noiseTail);
+      this.voices.push(noise);
+    }
   }
 
-  /** Brighter voice for the melody line. */
-  lead(midi, time, duration, gain = 0.2) {
+  /**
+   * Synthesised kit pieces. The kit does not swap the sounds out; it tunes,
+   * stretches and dulls the ones that are already there.
+   *
+   * @param {string} id one of the TRACKS ids
+   * @param {number} time
+   * @param {number} gain
+   * @param {string} [kitId]
+   */
+  drum(id, time, gain = 0.6, kitId = this.instruments.kit) {
     const ctx = this.ctx;
-    const osc = ctx.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.value = mtof(midi);
+    const spec = DRUM_VOICES[id];
+    if (!spec) return;
+    const kit = drumKit(kitId);
+    const level = gain * (spec.level ?? 1) * (kit.gain ?? 1);
+    const decay = (t) => Math.max(0.01, t * (kit.decay ?? 1));
+    const tune = (hz) => hz * (kit.pitch ?? 1);
 
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(2600, time);
-    filter.frequency.setTargetAtTime(1100, time + 0.02, 0.25);
-    filter.Q.value = 3;
+    // A kit-wide lid, so "tape" and "cardboard" are dull all the way through.
+    let bus = this.master;
+    if (kit.lowpass) {
+      const lid = ctx.createBiquadFilter();
+      lid.type = 'lowpass';
+      lid.frequency.value = kit.lowpass;
+      lid.connect(this.master);
+      bus = lid;
+    }
 
-    const env = ctx.createGain();
-    env.gain.setValueAtTime(0, time);
-    env.gain.linearRampToValueAtTime(gain, time + 0.012);
-    env.gain.setTargetAtTime(gain * 0.6, time + 0.03, 0.15);
-    env.gain.setTargetAtTime(0.0001, time + duration, 0.06);
+    const run = (source, stopAt) => {
+      source.start(time);
+      source.stop(stopAt);
+      this.voices.push(source);
+    };
 
-    osc.connect(filter).connect(env).connect(this.master);
-    osc.start(time);
-    osc.stop(time + duration + 0.4);
-    this.voices.push(osc);
-  }
-
-  /** Synthesised kit pieces. */
-  drum(id, time, gain = 0.6) {
-    const ctx = this.ctx;
-    if (id === 'kick') {
+    if (spec.kind === 'tonal' || spec.kind === 'wood') {
       const osc = ctx.createOscillator();
       const env = ctx.createGain();
-      osc.frequency.setValueAtTime(140, time);
-      osc.frequency.exponentialRampToValueAtTime(45, time + 0.09);
-      env.gain.setValueAtTime(gain, time);
-      env.gain.exponentialRampToValueAtTime(0.0001, time + 0.32);
-      osc.connect(env).connect(this.master);
-      osc.start(time);
-      osc.stop(time + 0.35);
-      this.voices.push(osc);
+      const tail = decay(spec.decay);
+      osc.type = spec.type || (spec.kind === 'wood' ? 'square' : 'sine');
+      osc.frequency.setValueAtTime(tune(spec.from), time);
+      osc.frequency.exponentialRampToValueAtTime(
+        Math.max(20, tune(spec.to)),
+        time + (spec.sweep ?? tail * 0.8),
+      );
+      env.gain.setValueAtTime(level, time);
+      env.gain.exponentialRampToValueAtTime(0.0001, time + tail);
+      osc.connect(env).connect(bus);
+      run(osc, time + tail + 0.05);
+
+      // A woodblock is mostly a click; the tick of noise is what sells it.
+      if (spec.noise) {
+        this.noiseHit({
+          time,
+          level: level * spec.noise,
+          decay: decay(spec.decay * 0.6),
+          type: 'bandpass',
+          frequency: (spec.band ?? 2400) * (kit.tone ?? 1),
+          q: 1.4,
+          bus,
+        });
+      }
       return;
     }
 
-    if (id === 'tom' || id === 'rim') {
-      const osc = ctx.createOscillator();
+    if (spec.kind === 'metal' || spec.kind === 'bell') {
+      const tail = decay(spec.decay);
       const env = ctx.createGain();
-      const base = id === 'tom' ? 220 : 900;
-      osc.type = id === 'tom' ? 'sine' : 'square';
-      osc.frequency.setValueAtTime(base, time);
-      osc.frequency.exponentialRampToValueAtTime(base * 0.55, time + 0.12);
-      env.gain.setValueAtTime(gain * (id === 'rim' ? 0.4 : 0.8), time);
-      env.gain.exponentialRampToValueAtTime(0.0001, time + (id === 'rim' ? 0.06 : 0.28));
-      osc.connect(env).connect(this.master);
-      osc.start(time);
-      osc.stop(time + 0.3);
-      this.voices.push(osc);
+      env.gain.setValueAtTime(level, time);
+      env.gain.exponentialRampToValueAtTime(0.0001, time + tail);
+
+      const shape = ctx.createBiquadFilter();
+      if (spec.kind === 'metal') {
+        shape.type = 'highpass';
+        shape.frequency.value = (spec.high ?? 7000) * (kit.tone ?? 1);
+      } else {
+        shape.type = 'bandpass';
+        shape.frequency.value = (spec.band ?? 2600) * (kit.tone ?? 1);
+        shape.Q.value = 2;
+      }
+      shape.connect(env).connect(bus);
+
+      const freqs = spec.kind === 'metal'
+        ? METAL_RATIOS.map((r) => spec.base * r)
+        : spec.partials;
+      for (const hz of freqs) {
+        const osc = ctx.createOscillator();
+        osc.type = spec.type || 'square';
+        osc.frequency.value = tune(hz);
+        const mix = ctx.createGain();
+        mix.gain.value = 1 / freqs.length;
+        osc.connect(mix).connect(shape);
+        run(osc, time + tail + 0.05);
+      }
+
+      // A ride has a stick on it as well as a wash.
+      if (spec.ping) {
+        this.noiseHit({
+          time,
+          level: level * 0.8,
+          decay: decay(0.04),
+          type: 'bandpass',
+          frequency: spec.ping * (kit.tone ?? 1),
+          q: 2,
+          bus,
+        });
+      }
+      if (spec.noise) {
+        this.noiseHit({
+          time,
+          level: level * spec.noise,
+          decay: tail * 0.5,
+          type: 'highpass',
+          frequency: (spec.high ?? 6000) * 0.8 * (kit.tone ?? 1),
+          bus,
+        });
+      }
       return;
     }
 
-    // Everything else is shaped noise.
+    if (spec.kind === 'clap') {
+      // Three bursts a few milliseconds apart, then a longer tail — the whole
+      // trick of a handclap is that it is not one hit.
+      for (const [offset, amount] of [[0, 0.7], [0.011, 0.9], [0.023, 1]]) {
+        this.noiseHit({
+          time: time + offset,
+          level: level * amount,
+          decay: decay(offset === 0.023 ? spec.decay : 0.012),
+          type: 'bandpass',
+          frequency: spec.band * (kit.tone ?? 1),
+          q: spec.q,
+          bus,
+        });
+      }
+      return;
+    }
+
+    // Plain filtered noise: snare, shaker.
+    this.noiseHit({
+      time,
+      level,
+      decay: decay(spec.decay),
+      attack: spec.attack,
+      type: 'bandpass',
+      frequency: spec.band * (kit.tone ?? 1),
+      q: spec.q,
+      bus,
+    });
+
+    if (spec.body) {
+      const body = ctx.createOscillator();
+      const bodyEnv = ctx.createGain();
+      body.frequency.setValueAtTime(tune(spec.body), time);
+      bodyEnv.gain.setValueAtTime(level * spec.bodyLevel, time);
+      bodyEnv.gain.exponentialRampToValueAtTime(0.0001, time + decay(spec.bodyDecay));
+      body.connect(bodyEnv).connect(bus);
+      body.start(time);
+      body.stop(time + decay(spec.bodyDecay) + 0.05);
+      this.voices.push(body);
+    }
+  }
+
+  /** One shaped burst of noise — the building block of half the kit. */
+  noiseHit({ time, level, decay, attack = 0, type = 'bandpass', frequency, q = 1, bus }) {
+    const ctx = this.ctx;
     const noise = ctx.createBufferSource();
     noise.buffer = this.noiseBuffer();
     const filter = ctx.createBiquadFilter();
+    filter.type = type;
+    filter.frequency.value = Math.max(20, Math.min(frequency, ctx.sampleRate / 2 - 100));
+    filter.Q.value = q;
     const env = ctx.createGain();
-    let stopAt;
-
-    if (id === 'hat' || id === 'openhat') {
-      filter.type = 'highpass';
-      filter.frequency.value = 7000;
-      const decay = id === 'hat' ? 0.045 : 0.28;
-      env.gain.setValueAtTime(gain * 0.35, time);
-      env.gain.exponentialRampToValueAtTime(0.0001, time + decay);
-      stopAt = time + decay + 0.05;
+    if (attack) {
+      env.gain.setValueAtTime(0.0001, time);
+      env.gain.linearRampToValueAtTime(level, time + attack);
     } else {
-      // Snare and clap: band-passed noise, snare with a bit of body under it.
-      filter.type = 'bandpass';
-      filter.frequency.value = id === 'clap' ? 1400 : 1900;
-      filter.Q.value = id === 'clap' ? 1.6 : 0.9;
-      env.gain.setValueAtTime(gain * 0.6, time);
-      env.gain.exponentialRampToValueAtTime(0.0001, time + 0.19);
-      stopAt = time + 0.25;
-
-      if (id === 'snare') {
-        const body = ctx.createOscillator();
-        const bodyEnv = ctx.createGain();
-        body.frequency.setValueAtTime(190, time);
-        bodyEnv.gain.setValueAtTime(gain * 0.25, time);
-        bodyEnv.gain.exponentialRampToValueAtTime(0.0001, time + 0.12);
-        body.connect(bodyEnv).connect(this.master);
-        body.start(time);
-        body.stop(time + 0.15);
-        this.voices.push(body);
-      }
+      env.gain.setValueAtTime(level, time);
     }
-
-    noise.connect(filter).connect(env).connect(this.master);
+    env.gain.exponentialRampToValueAtTime(0.0001, time + attack + decay);
+    noise.connect(filter).connect(env).connect(bus || this.master);
     // stop() must come after start(), or the node throws.
     noise.start(time);
-    noise.stop(stopAt);
+    noise.stop(time + attack + decay + 0.05);
     this.voices.push(noise);
   }
 
@@ -283,16 +491,30 @@ export class AudioEngine {
   }
 
   /** One-off chord preview, used when you click a chord card. */
-  strum(voicing) {
+  strum(voicing, instrumentId = this.instruments.harmony) {
     this.ensure();
+    const spec = harmonyInstrument(instrumentId);
     const time = this.ctx.currentTime + 0.02;
-    voicing.forEach((midi, i) => this.pad(midi, time + i * 0.02, 1.1, 0.18));
+    voicing.forEach((midi, i) => this.voice(spec, midi, time + i * Math.max(0.02, spec.spread ?? 0.02), 1.1, 0.18));
+  }
+
+  /** A few notes on one instrument, for the "hear it" buttons. */
+  audition(spec, midis, { gap = 0.16, length = 0.3, gain = 0.18 } = {}) {
+    this.ensure();
+    const time = this.ctx.currentTime + 0.03;
+    midis.forEach((midi, i) => this.voice(spec, midi, time + i * gap, length, gain));
   }
 
   /** Short blip, so dragging a note in the piano roll tells you where you are. */
-  preview(midi) {
+  preview(midi, instrumentId = this.instruments.lead) {
     this.ensure();
-    this.lead(midi, this.ctx.currentTime + 0.01, 0.18, 0.16);
+    this.voice(leadInstrument(instrumentId), midi, this.ctx.currentTime + 0.01, 0.18, 0.16);
+  }
+
+  /** One kit piece on its own, so switching kits is worth doing by ear. */
+  previewDrum(id, kitId = this.instruments.kit) {
+    this.ensure();
+    this.drum(id, this.ctx.currentTime + 0.01, 0.6, kitId);
   }
 }
 
