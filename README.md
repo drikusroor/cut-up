@@ -22,6 +22,16 @@ python3 -m http.server 8000     # or: npx http-server -p 8000
 Then open <http://localhost:8000>. Any static host works — drop the folder on
 GitHub Pages, Netlify, or a Raspberry Pi, and it works the same.
 
+### Deploying
+
+`.github/workflows/pages.yml` runs the tests and publishes the repository root
+to GitHub Pages on every push to `main`. It needs **Settings → Pages → Build and
+deployment → Source** set to **GitHub Actions**; with that set, the live site
+lands at <https://drikusroor.github.io/cut-up/>.
+
+Every path in the app is relative, so it works from a project subpath without
+any base-URL configuration.
+
 ## Words
 
 Three sources feed one pile of paper strips, and you set how much of each goes
