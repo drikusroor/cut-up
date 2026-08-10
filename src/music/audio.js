@@ -10,6 +10,8 @@
 import { arrange } from './arrange.js';
 import { stepTime } from './rhythm.js';
 import { bassInstrument, drumKit, harmonyInstrument, leadInstrument } from './instruments.js';
+import { defaultHumanize, humanizeOffset } from './humanize.js';
+import { defaultTuning, noteCents } from './tuning.js';
 
 /**
  * How each kit piece is made. `kind` picks the renderer:
@@ -57,6 +59,11 @@ export class AudioEngine {
     this.instruments = {
       lead: 'saw', harmony: 'pad', bass: 'finger', kit: 'studio',
     };
+    // Same for how in tune and how in time it is: a song says so per play, a
+    // preview has to be told once and remember.
+    this.feel = defaultHumanize();
+    this.tuning = defaultTuning();
+    this.rootPc = 0;
   }
 
   /** Browsers only allow this after a user gesture, so call it from a click. */
@@ -78,6 +85,21 @@ export class AudioEngine {
   /** Keeps previews in step with whatever the panels currently have selected. */
   setInstruments(instruments) {
     this.instruments = { ...this.instruments, ...instruments };
+  }
+
+  /** How loose the band is. Only playback uses it — a preview is one note. */
+  setFeel(feel) {
+    this.feel = feel || defaultHumanize();
+  }
+
+  /**
+   * The temperament and the detune, plus the key they are measured from. An
+   * unequal temperament tunes relative to the tonic, so a preview has to know
+   * which key it is previewing.
+   */
+  setTuning(tuning, rootPc = 0) {
+    this.tuning = tuning || defaultTuning();
+    this.rootPc = rootPc;
   }
 
   get currentStep() {
@@ -115,6 +137,8 @@ export class AudioEngine {
    * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.bass]
    * @param {{tracks: Array<{id:string, pattern:boolean[], velocities:number[]}>}} [song.rhythm]
    * @param {{lead?:string, harmony?:string, bass?:string, kit?:string}} [song.instruments]
+   * @param {object} [song.feel] humanize settings — see humanize.js
+   * @param {object} [song.tuning] temperament and detune — see tuning.js
    * @param {number} [song.totalSteps]
    * @param {boolean} [song.loop]
    * @param {{chords?:boolean, melody?:boolean, bass?:boolean, drums?:boolean}} [song.parts]
@@ -131,6 +155,8 @@ export class AudioEngine {
         chords: true, melody: true, bass: true, drums: true,
       },
       instruments = this.instruments,
+      feel = this.feel,
+      tuning = this.tuning,
     } = song;
 
     // Shorter parts repeat to fill the loop — see arrange().
@@ -143,17 +169,50 @@ export class AudioEngine {
     this.loopSeconds = totalSteps * secondsPerStep;
     this.playing = true;
 
+    /**
+     * Where an event actually sounds: its step, swung, then nudged off the grid
+     * by however much this part is rushing, dragging or simply not a machine.
+     * Nothing is ever scheduled in the past, or the browser fires it late and
+     * the whole bar limps.
+     */
+    const timeOf = (part, step, at, voice) => Math.max(
+      ctx.currentTime,
+      at + stepTime(step, secondsPerStep, swing)
+        + humanizeOffset(part, step, feel, voice) * secondsPerStep,
+    );
+
+    /** How far off the piano one note is: temperament, detune and drift. */
+    const centsOf = (part, note) => noteCents({
+      part,
+      midi: note.midi,
+      step: note.step,
+      rootPc: note.rootPc ?? song.rootPc ?? this.rootPc,
+      tuning,
+    });
+
     const schedule = (at) => {
       if (parts.chords) {
         for (const chord of chords) {
           // Each note carries the instrument of the section it came from, so a
           // song can change voice from one section to the next.
           const spec = harmonyInstrument(chord.instrument || instruments.harmony);
-          const time = at + chord.step * secondsPerStep;
+          // Chords are not swung — a pad landing late on every off-step only
+          // smears the harmony — but they are humanised like everything else.
+          const time = Math.max(
+            ctx.currentTime,
+            at + (chord.step + humanizeOffset('chords', chord.step, feel)) * secondsPerStep,
+          );
           const duration = chord.length * secondsPerStep * 0.96;
           chord.voicing.forEach((midi, voice) => {
             // Tiny spread so the chord sounds strummed rather than stamped.
-            this.voice(spec, midi, time + voice * (spec.spread ?? 0.012), duration, 0.16);
+            this.voice(
+              spec,
+              midi,
+              time + voice * (spec.spread ?? 0.012),
+              duration,
+              0.16,
+              centsOf('harmony', { midi, step: chord.step, rootPc: chord.rootPc }),
+            );
           });
         }
       }
@@ -162,9 +221,10 @@ export class AudioEngine {
           this.voice(
             leadInstrument(note.instrument || instruments.lead),
             note.midi,
-            at + stepTime(note.step, secondsPerStep, swing),
+            timeOf('melody', note.step, at),
             Math.max(0.08, note.length * secondsPerStep * 0.92),
             ((note.velocity ?? 96) / 127) * 0.28,
+            centsOf('lead', note),
           );
         }
       }
@@ -175,15 +235,18 @@ export class AudioEngine {
           this.voice(
             bassInstrument(note.instrument || instruments.bass),
             note.midi,
-            at + stepTime(note.step, secondsPerStep, swing),
+            timeOf('bass', note.step, at),
             Math.max(0.08, note.length * secondsPerStep * 0.94),
             ((note.velocity ?? 100) / 127) * 0.26,
+            centsOf('bass', note),
           );
         }
       }
       if (parts.drums) {
         for (const hit of drums) {
-          const time = at + stepTime(hit.step, secondsPerStep, swing);
+          // Salted with the piece, so a drummer who drags can drag the snare
+          // without dragging the hat that lands on the same step.
+          const time = timeOf('drums', hit.step, at, hit.id);
           this.drum(hit.id, time, (hit.velocity / 127) * 0.7, hit.kit || instruments.kit);
         }
       }
@@ -221,8 +284,10 @@ export class AudioEngine {
    * @param {number} time when to start, in context time
    * @param {number} duration how long the key is held, in seconds
    * @param {number} gain
+   * @param {number} [detune] cents off equal temperament — an unequal
+   *   temperament, an instrument that is slightly out, or both
    */
-  voice(spec, midi, time, duration, gain = 0.2) {
+  voice(spec, midi, time, duration, gain = 0.2, detune = 0) {
     const ctx = this.ctx;
     const freq = mtof(midi);
     const env = { attack: 0.01, decay: 0.2, sustain: 0.7, release: 0.1, ...(spec.env || {}) };
@@ -265,7 +330,9 @@ export class AudioEngine {
       const osc = ctx.createOscillator();
       osc.type = partial.type || 'sine';
       osc.frequency.value = freq * (partial.ratio ?? 1);
-      osc.detune.value = partial.detune ?? 0;
+      // The recipe's own detune is what makes a voice thick; this one is what
+      // makes it play in a different tuning from the piano.
+      osc.detune.value = (partial.detune ?? 0) + detune;
       if (vibrato) vibrato.connect(osc.detune);
 
       const mix = ctx.createGain();
@@ -510,25 +577,54 @@ export class AudioEngine {
     return this._noise;
   }
 
+  /**
+   * How far off the piano a previewed note is. Previews go through the same
+   * temperament as playback — a microtonal key you can only hear when the whole
+   * loop is running would be no use to anyone tuning by ear.
+   */
+  previewCents(part, midi) {
+    return noteCents({
+      part, midi, step: 0, rootPc: this.rootPc, tuning: this.tuning,
+    });
+  }
+
   /** One-off chord preview, used when you click a chord card. */
   strum(voicing, instrumentId = this.instruments.harmony) {
     this.ensure();
     const spec = harmonyInstrument(instrumentId);
     const time = this.ctx.currentTime + 0.02;
-    voicing.forEach((midi, i) => this.voice(spec, midi, time + i * Math.max(0.02, spec.spread ?? 0.02), 1.1, 0.18));
+    voicing.forEach((midi, i) => this.voice(
+      spec,
+      midi,
+      time + i * Math.max(0.02, spec.spread ?? 0.02),
+      1.1,
+      0.18,
+      this.previewCents('harmony', midi),
+    ));
   }
 
   /** A few notes on one instrument, for the "hear it" buttons. */
-  audition(spec, midis, { gap = 0.16, length = 0.3, gain = 0.18 } = {}) {
+  audition(spec, midis, {
+    gap = 0.16, length = 0.3, gain = 0.18, part = 'lead',
+  } = {}) {
     this.ensure();
     const time = this.ctx.currentTime + 0.03;
-    midis.forEach((midi, i) => this.voice(spec, midi, time + i * gap, length, gain));
+    midis.forEach((midi, i) => this.voice(
+      spec, midi, time + i * gap, length, gain, this.previewCents(part, midi),
+    ));
   }
 
   /** Short blip, so dragging a note in the piano roll tells you where you are. */
   preview(midi, instrumentId = this.instruments.lead) {
     this.ensure();
-    this.voice(leadInstrument(instrumentId), midi, this.ctx.currentTime + 0.01, 0.18, 0.16);
+    this.voice(
+      leadInstrument(instrumentId),
+      midi,
+      this.ctx.currentTime + 0.01,
+      0.18,
+      0.16,
+      this.previewCents('lead', midi),
+    );
   }
 
   /** One kit piece on its own, so switching kits is worth doing by ear. */

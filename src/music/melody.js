@@ -31,6 +31,7 @@ export const MELODY_SHAPES = [
  * @param {number} opts.rootPc
  * @param {string} opts.scaleId
  * @param {number} [opts.stepsPerChord]
+ * @param {number} [opts.stepsPerBeat] steps in one felt beat, from the meter
  * @param {number} [opts.density] 0..1 how many grid steps get a note
  * @param {number} [opts.chordTones] 0..1 pull towards notes in the current chord
  * @param {number} [opts.restiness] 0..1 chance a candidate note becomes a rest
@@ -45,6 +46,7 @@ export function generateMelody(opts) {
     rootPc = 0,
     scaleId = 'major',
     stepsPerChord = 16,
+    stepsPerBeat = 4,
     density = 0.45,
     chordTones = 0.6,
     restiness = 0.2,
@@ -55,6 +57,7 @@ export function generateMelody(opts) {
   if (!chords.length) return [];
 
   const scalePcs = scalePitchClasses(rootPc, scaleId);
+  const beat = Math.max(1, Math.round(stepsPerBeat));
   const [low, high] = range;
   const notes = [];
   let current = nearest(low + Math.floor((high - low) / 2), scalePcs, low, high);
@@ -68,7 +71,7 @@ export function generateMelody(opts) {
     let step = 0;
     while (step < stepsPerChord) {
       const absolute = chordIndex * stepsPerChord + step;
-      const onBeat = step % 4 === 0;
+      const onBeat = step % beat === 0;
       const hitChance = density * (onBeat ? 1.5 : 0.7);
 
       if (!chance(rng, hitChance) || chance(rng, restiness * (onBeat ? 0.4 : 1))) {

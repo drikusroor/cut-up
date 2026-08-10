@@ -10,6 +10,7 @@ import {
   TRACKS,
 } from '../music/rhythm.js';
 import { AUTO, DRUM_KITS, drumKit, instrumentOptions, resolveKit } from '../music/instruments.js';
+import { meterInfo } from '../music/meter.js';
 
 const PERCENT = (v) => `${Math.round(Number(v) * 100)}%`;
 
@@ -20,7 +21,7 @@ export function initRhythm(ctx) {
   const ui = {
     style: $('#rhythm-style'),
     hint: $('#rhythm-hint'),
-    steps: $('#steps-per-bar'),
+    grid: $('#grid-readout'),
     bars: $('#rhythm-bars'),
     density: $('#rhythm-density'),
     variation: $('#variation'),
@@ -40,10 +41,12 @@ export function initRhythm(ctx) {
   bindSlider(ui.density, $('#out-rdensity'), PERCENT);
   bindSlider(ui.variation, $('#out-variation'), PERCENT);
 
+  /** How the bar is counted: the time signature's business, not this panel's. */
+  const grid = () => meterInfo(state.meter);
+
   /** Writes the stored settings back into the controls. */
   function writeControls() {
     ui.style.value = r.style;
-    ui.steps.value = String(r.steps);
     ui.bars.value = r.bars;
     // Before anything reads the controls, or the stored seed looks like a blank.
     ui.seed.value = r.seed;
@@ -55,6 +58,15 @@ export function initRhythm(ctx) {
       box.checked = r.trackIds.includes(box.value);
     }
     syncKit();
+    syncGrid();
+  }
+
+  /** The bar the sequencer is drawing, in the transport's time signature. */
+  function syncGrid() {
+    const info = grid();
+    ui.grid.textContent = info.compound
+      ? `${info.stepsPerBar} steps of ${info.label}, felt in ${info.pulses}`
+      : `${info.stepsPerBar} steps of ${info.label}`;
   }
 
   /** Which kit you actually got — "from the seed" changes under you. */
@@ -96,7 +108,8 @@ export function initRhythm(ctx) {
     r.seed = ui.seed.value.trim() || randomSeed();
     r.kit = ui.kit.value;
     r.style = ui.style.value;
-    r.steps = Number(ui.steps.value);
+    // The bar length is the time signature's to decide.
+    r.steps = grid().stepsPerBar;
     r.bars = Number(ui.bars.value);
     r.density = Number(ui.density.value);
     r.variation = Number(ui.variation.value);
@@ -110,6 +123,7 @@ export function initRhythm(ctx) {
     syncKit();
     r.pattern = generateRhythm({
       rng: makeRng(`rhythm:${r.seed}`),
+      meter: state.meter,
       steps: r.steps,
       bars: r.bars,
       style: r.style,
@@ -126,7 +140,8 @@ export function initRhythm(ctx) {
   function cutUp() {
     if (!r.pattern) return generate();
     const rng = makeRng(`cutup:${randomSeed()}`);
-    const stepsPerBeat = Math.max(1, Math.round(r.steps / 4));
+    // Strips of one felt beat, so a shuffled bar still lands on its beats.
+    const stepsPerBeat = grid().pulse;
     r.pattern = {
       ...r.pattern,
       tracks: r.pattern.tracks.map((track) => {
@@ -149,7 +164,7 @@ export function initRhythm(ctx) {
   function render() {
     const pattern = r.pattern;
     if (!pattern) return;
-    const stepsPerBeat = Math.max(1, Math.round(pattern.steps / 4));
+    const stepsPerBeat = grid().pulse;
 
     ui.out.replaceChildren(
       ...pattern.tracks.map((track) => el('div', { class: 'grid-row', dataset: { track: track.id } }, [
@@ -207,16 +222,22 @@ export function initRhythm(ctx) {
   ui.seed.addEventListener('change', () => generate({ newSeed: false }));
   ui.newSeed.addEventListener('click', () => generate({ newSeed: true }));
   ui.style.addEventListener('change', () => { syncStyle(); generate({ newSeed: false }); });
-  for (const input of [ui.steps, ui.bars, ui.density, ui.variation]) {
+  for (const input of [ui.bars, ui.density, ui.variation]) {
     input.addEventListener('change', () => generate({ newSeed: false }));
   }
 
   writeControls();
   syncStyle();
-  if (r.pattern) render();
-  else generate({ newSeed: true });
+  // A pattern stored in a bar of a different length is not this bar's pattern.
+  if (r.pattern && r.pattern.steps === grid().stepsPerBar) render();
+  else generate({ newSeed: false });
 
   return {
+    /** The bar changed length under it, so the pattern is written again. */
+    applyMeter() {
+      syncGrid();
+      generate({ newSeed: false });
+    },
     /** Re-reads state.rhythm after a section has been loaded over it. */
     applyState() {
       writeControls();

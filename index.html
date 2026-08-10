@@ -183,10 +183,11 @@
         </label>
         <label class="field"><span>Bars per chord</span>
           <select id="bars-per-chord">
-            <option value="8">½</option>
-            <option value="16" selected>1</option>
-            <option value="32">2</option>
+            <option value="0.5">½</option>
+            <option value="1" selected>1</option>
+            <option value="2">2</option>
           </select>
+          <small id="chord-length-hint" class="hint"></small>
         </label>
       </fieldset>
 
@@ -348,14 +349,8 @@
           <small id="rhythm-hint" class="hint"></small>
         </label>
         <div class="row">
-          <label class="field grow"><span>Steps per bar</span>
-            <select id="steps-per-bar">
-              <option value="8">8</option>
-              <option value="12">12 (6/8)</option>
-              <option value="16" selected>16</option>
-            </select>
-          </label>
           <label class="field grow"><span>Bars</span><input type="number" id="rhythm-bars" min="1" max="4" value="2"></label>
+          <div class="field grow"><span>Grid</span><small class="hint" id="grid-readout"></small></div>
         </div>
         <label class="field slider">
           <span>Density <output id="out-rdensity"></output></span>
@@ -461,6 +456,18 @@
   <button type="button" class="btn primary" id="play">▶ Play</button>
   <button type="button" class="btn" id="stop">■ Stop</button>
   <label class="field inline"><span>BPM</span><input type="number" id="tempo" min="40" max="220" value="96"></label>
+  <div class="field inline meter">
+    <span>Time</span>
+    <input type="number" id="meter-beats" min="1" max="16" value="4" aria-label="Beats per bar">
+    <span class="over">/</span>
+    <select id="meter-unit" aria-label="Beat unit">
+      <option value="2">2</option>
+      <option value="4" selected>4</option>
+      <option value="8">8</option>
+      <option value="16">16</option>
+    </select>
+    <small class="hint" id="meter-readout"></small>
+  </div>
   <label class="field inline slider">
     <span>Swing <output id="out-swing"></output></span>
     <input type="range" id="swing" min="0" max="0.75" step="0.05" value="0">
@@ -471,6 +478,86 @@
     <label class="check"><input type="checkbox" id="part-bass" checked> Bass</label>
     <label class="check"><input type="checkbox" id="part-drums" checked> Drums</label>
   </div>
+
+  <div class="drawers">
+  <details class="drawer" id="feel-drawer">
+    <summary class="btn ghost" title="How tight the playing is">🫀 Feel</summary>
+    <div class="drawer-body">
+      <h3 class="section-label">Humanize</h3>
+      <label class="field slider">
+        <span>Loose ↔ tight <output id="out-humanize"></output></span>
+        <input type="range" id="humanize" min="0" max="1" step="0.05" value="0">
+      </label>
+      <small class="hint">
+        Nobody plays on the grid. This pulls every note a little off its step — and lets each
+        player be off it in their own way: a drummer who rushes the hats, a bass that sits
+        behind the beat. At zero it is a machine again.
+      </small>
+      <div class="feel-parts" id="humanize-parts"></div>
+      <div class="row">
+        <label class="field grow"><span>Feel seed</span><input type="text" id="feel-seed" aria-label="Feel seed"></label>
+        <button type="button" class="btn ghost" id="new-feel-seed" title="Play it again, differently">🎲</button>
+      </div>
+      <small class="hint">
+        The deviations are seeded like everything else here, so the same seed is the same take —
+        and the MIDI export is the take you just heard rather than a second, differently sloppy one.
+      </small>
+    </div>
+  </details>
+
+  <details class="drawer" id="tuning-drawer">
+    <summary class="btn ghost" title="Temperament and detuning">🎼 Tuning</summary>
+    <div class="drawer-body">
+      <h3 class="section-label">Temperament</h3>
+      <label class="field">
+        <span>System</span>
+        <select id="tuning-system"></select>
+        <small id="tuning-hint" class="hint"></small>
+      </label>
+      <label class="field" id="divisions-field">
+        <span>Divisions of the octave</span>
+        <input type="number" id="tuning-divisions" min="5" max="72" value="12" list="edo-suggestions">
+        <datalist id="edo-suggestions">
+          <option value="12">12 — the piano</option>
+          <option value="17"></option>
+          <option value="19"></option>
+          <option value="21"></option>
+          <option value="24"></option>
+          <option value="27"></option>
+          <option value="31"></option>
+          <option value="41"></option>
+          <option value="53"></option>
+        </datalist>
+        <small class="hint">
+          Twelve is the piano. Anything else keeps the twelve notes of the key and the chords you
+          know, and puts them on the nearest steps of a finer ladder — 19 and 31 flatten the
+          thirds, 17 sharpens them, 24 lands back on the piano. The octave and the tonic never move.
+        </small>
+      </label>
+
+      <h3 class="section-label">Out of tune</h3>
+      <label class="field slider">
+        <span>Instrument detune <output id="out-detune"></output></span>
+        <input type="range" id="tuning-detune" min="0" max="30" step="1" value="0">
+      </label>
+      <label class="field slider">
+        <span>Note-to-note drift <output id="out-drift"></output></span>
+        <input type="range" id="tuning-drift" min="0" max="20" step="1" value="0">
+      </label>
+      <small class="hint" id="detune-readout"></small>
+      <div class="row">
+        <label class="field grow"><span>Tuning seed</span><input type="text" id="tuning-seed" aria-label="Tuning seed"></label>
+        <button type="button" class="btn ghost" id="new-tuning-seed" title="Tune the band again">🎲</button>
+      </div>
+      <small class="hint">
+        Detune is a fixed offset per instrument — a section that tuned five minutes ago. Drift is
+        per note, which is a singer rather than a piano. Both come off the seed, so a piece keeps
+        the same slightly-wrong tuning every time you play it.
+      </small>
+    </div>
+  </details>
+  </div>
+
   <div class="spacer"></div>
   <small class="hint" id="play-scope"></small>
   <button type="button" class="btn ghost" id="export-midi">⤓ Export MIDI</button>

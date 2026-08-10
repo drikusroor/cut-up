@@ -195,8 +195,8 @@ shelf prints the voices under each card. A section stores the *choice* rather
 than the result, so one left on "from the seed" re-derives its sound from its
 own seeds:
 every section you roll turns up in a different colour, and none of them drift
-when you go back to them. Tempo, swing and which parts sound stay global — they
-live in the transport.
+when you go back to them. Tempo, time signature, feel, tuning and which parts
+sound stay global — they live in the transport.
 
 ## Rhythm
 
@@ -204,9 +204,10 @@ A step sequencer with five generators: **euclidean** (pulses spread as evenly as
 possible — the maths behind a lot of world percussion), **backbeat**, **pure
 chance**, **cut-up** (generate a bar, chop it into beats, shuffle), and
 **polyrhythm** (every piece gets its own pulse count, so the parts pull apart
-and only line up again at the top). Set steps per bar (8, 12 for 6/8, or 16),
-bars, density, and how much bar 2 drifts from bar 1. Click any step to edit it
-by hand, or a row's name to hear that piece on its own.
+and only line up again at the top). How many steps are in a bar is the time
+signature's business — see [Time](#time) — so what you set here is bars,
+density, and how much bar 2 drifts from bar 1. Click any step to edit it by
+hand, or a row's name to hear that piece on its own.
 
 Sixteen pieces: kick, snare, clap, rim, tom, conga, closed and open hat, ride,
 crash, shaker, tambourine, cowbell, woodblock, clave and triangle. They are not
@@ -221,6 +222,65 @@ then a couple of extras.
 *909*, *tape lo-fi*, *toy box*, *cardboard*. A kit is not a different set of
 drums; it tunes them, stretches their tails and puts a lid on the top. Like the
 instruments, it defaults to taking its choice from the seed.
+
+## Time
+
+Next to the tempo is the time signature: how many beats in a bar, and what kind
+of beat. Type `7` over the `4`, or pick an `8` underneath, and everything moves
+with it — the sequencer draws a bar of that length, the chord length is measured
+in those bars, and the melody and bass are cut onto the new beat. A step is
+always a sixteenth note, so 4/4 is 16 steps, 3/4 is 12, 7/8 is 14.
+
+Compound meters are counted properly: 6/8 is two dotted beats rather than six
+eighths, so the snare lands where a drummer would put it and not on every
+eighth. The exported MIDI carries the signature, so a DAW draws the same bar
+lines you were looking at.
+
+Changing it re-cuts the parts from the same seeds — it is the same idea counted
+differently rather than a new one. Hand edits on the melody go the way they go
+on any reroll, because the notes they were pinned to no longer exist.
+
+## Feel
+
+A sequencer plays exactly on the grid. Nobody else does. The **Feel** drawer in
+the transport has one slider for how loose the whole band is, and then two per
+player:
+
+- **Off the grid** — how far that part's notes wander off their step, at
+  random. The deviations pile up around zero rather than spreading flat, so most
+  notes are nearly right and a few are noticeably out, which is what a player's
+  timing actually looks like when you measure it.
+- **Rush ↔ lag** — which side of the beat that part sits on, all the time. A
+  drummer who pushes, a bass that plays behind it. This is the one that changes
+  how a groove feels rather than how tidy it is.
+
+It is seeded like everything else here, so the same seed is the same take, and
+the MIDI export is the take you just heard rather than a second, differently
+sloppy one. At zero it is a machine again, note for note.
+
+## Tuning
+
+The **Tuning** drawer holds two ideas that share the same arithmetic.
+
+**Temperament** is where the notes are. *Divisions of the octave* is normally
+12 — the piano — and anything else keeps the twelve notes of the key and the
+chords you already know, and puts them on the nearest steps of a finer ladder.
+19 and 31 flatten the thirds, 17 sharpens them, 24 lands back on the piano
+because it contains it. The tonic and the octave never move, so it bends the
+colour of a key rather than drifting out of it. There are also the old unequal
+temperaments — just intonation, Pythagorean, quarter-comma meantone — which are
+measured from whatever key you are in, so the home key is the one that is sweet.
+
+**Detune** is where the players are. *Instrument detune* gives each part a fixed
+offset, which is a section that tuned five minutes ago; *note-to-note drift*
+wobbles each note on its own, which is a singer rather than a piano. Both come
+off the tuning seed, so a piece keeps the same slightly-wrong tuning every time
+you play it.
+
+MIDI export writes the melody and the bass as pitch bends — one per note, with
+the bend range declared in the file — so a microtonal line survives the trip
+into a DAW. The chord track cannot be bent note by note on one channel, so it is
+left on the nearest keys.
 
 ## Seeds
 
@@ -238,7 +298,8 @@ left it.
 
 ## Playing and exporting
 
-The transport at the bottom is shared: tempo, swing, and which parts sound.
+The transport at the bottom is shared: tempo, time signature, swing, feel,
+tuning, and which parts sound.
 Whichever part is longest sets the loop length and the shorter ones repeat to
 fill it, so a two-bar drum pattern keeps playing under a four-bar progression.
 Space bar toggles playback. Everything is synthesised with the Web Audio API —
@@ -249,7 +310,8 @@ of you, and on the Song tab it plays the arrangement from the top, section by
 section. The readout next to Export MIDI tells you which.
 
 **Export MIDI** writes a type-1 file with chords, melody, bass and drums on
-separate tracks (drums on channel 10), swing baked in, ready to drag into any DAW — the
+separate tracks (drums on channel 10), swing and the humanizer's nudges baked
+in, the time signature on the tempo track, ready to drag into any DAW — the
 loop, or the whole song if that is what you are playing. Each instrument carries
 a General MIDI program number, so the file opens on roughly the patch you were
 hearing; a song whose sections change voice writes a program change at each
@@ -258,7 +320,7 @@ join.
 ## Development
 
 ```sh
-npm test                        # 84 unit tests, no dependencies
+npm test                        # 111 unit tests, no dependencies
 node tools/build-wordlists.mjs  # regenerate data/words.*.json
 ```
 
@@ -273,15 +335,19 @@ src/
   sources.js        built-in seed texts
   music/
     theory.js       scales, chords, progressions, voicing, chord parsing
+    meter.js        time signatures: how long a bar is and how it is counted
     melody.js       melody generation, cut-up transforms, the hand-edit ledger
     bass.js         the bass line, written against the drums and the melody
     rhythm.js       euclidean and friends, and the kit written by role
+    humanize.js     the seeded timing deviations that stop it sounding perfect
+    tuning.js       temperaments, microtonal divisions, and instrument detune
     instruments.js  synth recipes for lead, harmony, bass and the drum kits
     sections.js     saved sections and the running order built from them
     arrange.js      lays the parts out over the loop, or sections end to end
     midi.js         a small type-1 MIDI writer
     audio.js        Web Audio playback
-  ui/               one module per tab, plus DOM helpers
+  ui/               one module per tab, one for the transport's drawers,
+                    plus DOM helpers
   main.js           state, persistence, tabs, transport
 tools/              word-list build script
 test/               node:test suites

@@ -5,11 +5,15 @@ import { initWords } from './ui/words-panel.js';
 import { initChords } from './ui/chords-panel.js';
 import { initRhythm } from './ui/rhythm-panel.js';
 import { initSong } from './ui/song-panel.js';
+import { initFeel } from './ui/feel-panel.js';
 import { AudioEngine } from './music/audio.js';
 import { songToMidi } from './music/midi.js';
 import { buildSongPlan } from './music/sections.js';
 import { emptyMelodyEdits } from './music/melody.js';
 import { AUTO, resolveInstruments } from './music/instruments.js';
+import { DEFAULT_METER, meterInfo, normalizeMeter } from './music/meter.js';
+import { defaultHumanize, normalizeHumanize } from './music/humanize.js';
+import { defaultTuning, normalizeTuning } from './music/tuning.js';
 import { randomSeed } from './rng.js';
 
 const STORAGE_KEY = 'cut-up:v1';
@@ -19,6 +23,11 @@ function defaultState() {
     tab: 'words',
     tempo: 96,
     swing: 0,
+    // Global, the way tempo and swing are: the time signature the whole song is
+    // counted in, how tightly the band plays it, and what it is tuned to.
+    meter: { ...DEFAULT_METER },
+    feel: defaultHumanize(),
+    tuning: defaultTuning(),
     parts: {
       chords: true, melody: true, bass: true, drums: true,
     },
@@ -51,6 +60,9 @@ function defaultState() {
       length: 4,
       sevenths: 0.2,
       spice: 0.15,
+      // How long a chord is held, in bars — and what that comes to in steps
+      // once the time signature has had its say.
+      barsPerChord: 1,
       stepsPerChord: 16,
       ownChords: '',
       chords: [],
@@ -113,9 +125,17 @@ function loadState() {
       words: { ...base.words, ...(stored.words || {}) },
       music: { ...base.music, ...(stored.music || {}) },
       rhythm: { ...base.rhythm, ...(stored.rhythm || {}) },
+      meter: normalizeMeter(stored.meter || base.meter),
+      feel: normalizeHumanize(stored.feel || base.feel),
+      tuning: normalizeTuning(stored.tuning || base.tuning),
       sections: Array.isArray(stored.sections) ? stored.sections : [],
       arrangement: Array.isArray(stored.arrangement) ? stored.arrangement : [],
     };
+    // A progression saved before time signatures existed knows how long its
+    // chords are in steps but not in bars, which is now the thing you set.
+    if (!Number.isFinite(state.music.barsPerChord)) {
+      state.music.barsPerChord = state.music.stepsPerChord / meterInfo(state.meter).stepsPerBar;
+    }
     // A melody saved before hand edits existed becomes its own base, so the
     // line you left behind is still there and is now draggable.
     if (!state.music.melodyBase?.length && state.music.melody?.length) {
@@ -150,8 +170,15 @@ const ctx = {
   // Clicking a chord card or dragging a note plays a single sound with no song
   // around it, so the engine has to be told what the current voices are.
   syncInstruments: () => audio.setInstruments(resolveInstruments(state.music, state.rhythm)),
+  // And what they are tuned to: a temperament is measured from the tonic, so a
+  // previewed chord has to know the key as well as the tuning.
+  syncFeel: () => {
+    audio.setFeel(state.feel);
+    audio.setTuning(state.tuning, state.music.rootPc);
+  },
 };
 ctx.syncInstruments();
+ctx.syncFeel();
 
 // --- panels -----------------------------------------------------------------
 
@@ -163,6 +190,23 @@ const chordsPanel = initChords(ctx);
 ctx.onRhythmChange = () => chordsPanel.rebuildBass();
 const rhythmPanel = initRhythm(ctx);
 const songPanel = initSong(ctx, { chords: chordsPanel, rhythm: rhythmPanel });
+
+// A bar of a different length is a different grid: the drum pattern is re-laid
+// on it, and the chords, melody and bass are re-cut to the new bar. Same seeds,
+// so it is the same idea counted differently rather than a new one.
+ctx.onMeterChange = () => {
+  rhythmPanel.applyMeter();
+  chordsPanel.applyMeter();
+  renderPlayScope();
+  ctx.refreshPlayback?.();
+};
+const feelPanel = initFeel(ctx);
+// The key lives in the Chords tab but the temperament readout is in the
+// transport, so the two have to be introduced.
+ctx.onKeyChange = () => {
+  ctx.syncFeel();
+  feelPanel.refresh();
+};
 
 // --- tabs -------------------------------------------------------------------
 
@@ -224,6 +268,7 @@ for (const part of ['chords', 'melody', 'bass', 'drums']) {
 /** The loop the Chords and Rhythm tabs are working on. */
 function buildLoop() {
   const m = state.music;
+  const bar = meterInfo(state.meter).stepsPerBar;
   const totalChordSteps = m.chords.length * m.stepsPerChord;
   const drumSteps = state.rhythm.pattern?.tracks?.[0]?.pattern.length ?? 0;
   const end = (notes) => notes.reduce((max, n) => Math.max(max, n.step + n.length), 0);
@@ -235,8 +280,11 @@ function buildLoop() {
     bass,
     rhythm: state.rhythm.pattern,
     instruments: resolveInstruments(m, state.rhythm),
+    // The key an unequal temperament is measured from.
+    rootPc: m.rootPc,
+    stepsPerBar: bar,
     // Loop over whichever part is longest; the shorter ones repeat to fill it.
-    totalSteps: Math.max(totalChordSteps, drumSteps, end(m.melody), end(bass), 16),
+    totalSteps: Math.max(totalChordSteps, drumSteps, end(m.melody), end(bass), bar),
   };
 }
 
@@ -254,7 +302,16 @@ function buildArrangedSong() {
 function buildSong({ scope = state.tab === 'song' ? 'song' : 'loop' } = {}) {
   const song = (scope === 'song' && buildArrangedSong()) || buildLoop();
   return {
-    ...song, tempo: state.tempo, swing: state.swing, parts: state.parts, loop: true,
+    ...song,
+    tempo: state.tempo,
+    swing: state.swing,
+    // Global, all three: the same bar, the same feel and the same tuning run
+    // under every section of the song.
+    meter: state.meter,
+    feel: state.feel,
+    tuning: state.tuning,
+    parts: state.parts,
+    loop: true,
   };
 }
 
@@ -284,6 +341,7 @@ let playbackScope = 'loop';
 function startPlayback(options) {
   playbackScope = options?.scope || (state.tab === 'song' ? 'song' : 'loop');
   ctx.syncInstruments();
+  ctx.syncFeel();
   audio.play(buildSong({ scope: playbackScope }));
 }
 
@@ -304,8 +362,9 @@ function renderPlayScope() {
     return;
   }
   const plan = buildSongPlan(state.sections, state.arrangement);
+  const bar = meterInfo(state.meter).stepsPerBar;
   scope.textContent = plan.blocks.length
-    ? `Playing the song — ${Math.max(1, Math.round(plan.totalSteps / 16))} bars`
+    ? `Playing the song — ${Math.max(1, Math.round(plan.totalSteps / bar))} bars`
     : 'No arrangement yet — looping what you have open';
 }
 

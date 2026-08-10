@@ -56,6 +56,30 @@ import {
   sectionSteps,
 } from '../src/music/sections.js';
 import { buildMidiFile, songToMidi, stepToTicks, writeVarInt } from '../src/music/midi.js';
+import {
+  backbeatPulses,
+  meterInfo,
+  meterLabel,
+  normalizeMeter,
+  pulseSteps,
+  stepsPerBar,
+} from '../src/music/meter.js';
+import {
+  defaultHumanize,
+  humanizeOffset,
+  isMachineTight,
+  normalizeHumanize,
+  pushLabel,
+} from '../src/music/humanize.js';
+import {
+  defaultTuning,
+  isEqualTempered,
+  noteCents,
+  normalizeTuning,
+  partDetuneCents,
+  temperamentCents,
+  tuningLabel,
+} from '../src/music/tuning.js';
 
 // --- theory -----------------------------------------------------------------
 
@@ -1093,4 +1117,352 @@ test('step-to-tick conversion applies swing to off-steps', () => {
   assert.equal(stepToTicks(4), 480);
   assert.equal(stepToTicks(1, 0), 120);
   assert.equal(stepToTicks(1, 0.5), 150);
+});
+
+// --- meter ------------------------------------------------------------------
+
+test('a bar is however many sixteenths the time signature asks for', () => {
+  assert.equal(stepsPerBar({ beats: 4, unit: 4 }), 16);
+  assert.equal(stepsPerBar({ beats: 3, unit: 4 }), 12);
+  assert.equal(stepsPerBar({ beats: 5, unit: 4 }), 20);
+  assert.equal(stepsPerBar({ beats: 6, unit: 8 }), 12);
+  assert.equal(stepsPerBar({ beats: 7, unit: 8 }), 14);
+  assert.equal(stepsPerBar({ beats: 12, unit: 8 }), 24);
+});
+
+test('compound meters are counted in threes, simple ones are not', () => {
+  // 6/8 is two dotted quarters, not six eighths — the whole difference between
+  // a jig and a fast waltz.
+  const six = meterInfo({ beats: 6, unit: 8 });
+  assert.equal(six.compound, true);
+  assert.equal(six.pulse, 6);
+  assert.equal(six.pulses, 2);
+  assert.equal(meterInfo({ beats: 12, unit: 8 }).pulses, 4);
+  // Three eighths is a bar, not two dotted beats.
+  assert.equal(meterInfo({ beats: 3, unit: 8 }).compound, false);
+  assert.equal(pulseSteps({ beats: 4, unit: 4 }), 4);
+  assert.equal(pulseSteps({ beats: 7, unit: 8 }), 2);
+});
+
+test('a nonsense meter falls back to something playable', () => {
+  assert.deepEqual(normalizeMeter({ beats: 0, unit: 5 }), { beats: 1, unit: 4 });
+  assert.deepEqual(normalizeMeter(null), { beats: 4, unit: 4 });
+  assert.deepEqual(normalizeMeter({ beats: 99, unit: 8 }), { beats: 16, unit: 8 });
+  assert.equal(meterLabel({ beats: 7, unit: 8 }), '7/8');
+});
+
+test('the backbeat lands on two and four, or on two when there is no four', () => {
+  assert.deepEqual(backbeatPulses(4), [1, 3]);
+  assert.deepEqual(backbeatPulses(3), [1]);
+  assert.deepEqual(backbeatPulses(2), [1]);
+  assert.deepEqual(backbeatPulses(5), [1, 3]);
+});
+
+test('a pattern is written into the bar the meter asks for', () => {
+  for (const meter of [{ beats: 3, unit: 4 }, { beats: 5, unit: 4 }, { beats: 7, unit: 8 }, { beats: 6, unit: 8 }]) {
+    const pattern = generateRhythm({
+      rng: makeRng(`m:${meterLabel(meter)}`),
+      meter,
+      bars: 2,
+      style: 'backbeat',
+      trackIds: ['kick', 'snare', 'hat'],
+    });
+    const bar = stepsPerBar(meter);
+    assert.equal(pattern.steps, bar, `${meterLabel(meter)} bar length`);
+    for (const track of pattern.tracks) {
+      assert.equal(track.pattern.length, bar * 2);
+      assert.equal(track.velocities.length, bar * 2);
+    }
+  }
+});
+
+test('the snare finds the felt beat, not the written one', () => {
+  const snareIn = (meter) => generateRhythm({
+    rng: makeRng('backbeat'), meter, bars: 1, style: 'backbeat', trackIds: ['snare'],
+  }).tracks[0].pattern;
+
+  // 4/4: two and four, at four sixteenths a beat.
+  const four = snareIn({ beats: 4, unit: 4 });
+  assert.equal(four[4], true);
+  assert.equal(four[12], true);
+  // 3/4: beat two only, because there is no four to land on.
+  const three = snareIn({ beats: 3, unit: 4 });
+  assert.equal(three[4], true);
+  assert.equal(three[0], false);
+  // 6/8: the second dotted beat, six sixteenths in — not the second eighth.
+  const six = snareIn({ beats: 6, unit: 8 });
+  assert.equal(six[6], true);
+  assert.equal(six[2], false);
+});
+
+test('the downbeat of an odd bar is still the loudest thing in it', () => {
+  const pattern = generateRhythm({
+    rng: makeRng('accents'), meter: { beats: 5, unit: 4 }, bars: 1, style: 'euclid', trackIds: ['hat'],
+  });
+  const { pattern: hits, velocities } = pattern.tracks[0];
+  assert.equal(hits[0], true);
+  const others = velocities.filter((v, i) => v > 0 && i > 0);
+  assert.ok(others.every((v) => v <= velocities[0]), 'nothing hits harder than the downbeat');
+});
+
+test('a melody in three counts its beats in three', () => {
+  const chords = generateProgression({
+    rng: makeRng('c'), rootPc: 0, scaleId: 'major', length: 2, mode: 'functional',
+  });
+  const notes = generateMelody({
+    rng: makeRng('mel'),
+    chords,
+    rootPc: 0,
+    scaleId: 'major',
+    stepsPerChord: 12,
+    stepsPerBeat: 4,
+    density: 1,
+    restiness: 0,
+  });
+  assert.ok(notes.length > 0);
+  assert.ok(notes.every((n) => n.step + n.length <= 24), 'nothing runs past the last bar');
+});
+
+test('a walking bass walks in the meter it is given', () => {
+  const chords = parseChords('Am F');
+  const line = generateBass({
+    rng: makeRng('b'),
+    chords,
+    stepsPerChord: 12,
+    stepsPerBeat: 6, // 6/8: two dotted beats to the bar
+    style: 'walk',
+    density: 0,
+    motion: 0,
+  });
+  // A note on every felt beat, and none of the sixteenth-note walk of 4/4.
+  for (const step of [0, 6, 12, 18]) {
+    assert.ok(line.some((n) => n.step === step), `a note on step ${step}`);
+  }
+  assert.ok(line.every((n) => n.step % 2 === 0));
+});
+
+// --- humanize ---------------------------------------------------------------
+
+test('by default nothing is humanised at all', () => {
+  const feel = defaultHumanize();
+  assert.equal(isMachineTight(feel), true);
+  for (let step = 0; step < 32; step++) {
+    for (const part of ['drums', 'bass', 'chords', 'melody']) {
+      assert.equal(humanizeOffset(part, step, feel), 0);
+    }
+  }
+});
+
+test('humanised notes wander off the grid, but not far', () => {
+  const feel = normalizeHumanize({ amount: 1, parts: { drums: { spread: 1, push: 0 } } });
+  const offsets = Array.from({ length: 64 }, (_, step) => humanizeOffset('drums', step, feel));
+  assert.ok(offsets.some((o) => o !== 0), 'something moved');
+  assert.ok(offsets.every((o) => Math.abs(o) <= 0.3), 'and nothing moved more than a third of a step');
+  // Humped around zero rather than spread flat: most notes are nearly right.
+  const near = offsets.filter((o) => Math.abs(o) < 0.15).length;
+  assert.ok(near > offsets.length / 2, 'most notes stay close to the beat');
+});
+
+test('the same seed is the same take, and a new seed is a new one', () => {
+  const feel = normalizeHumanize({ amount: 1, seed: 'take-one' });
+  const again = normalizeHumanize({ amount: 1, seed: 'take-one' });
+  const other = normalizeHumanize({ amount: 1, seed: 'take-two' });
+  const run = (f) => Array.from({ length: 32 }, (_, step) => humanizeOffset('melody', step, f));
+  assert.deepEqual(run(feel), run(again));
+  assert.notDeepEqual(run(feel), run(other));
+  // Two pieces of the kit on the same step do not land on the same offset.
+  assert.notEqual(humanizeOffset('drums', 4, feel, 'kick'), humanizeOffset('drums', 4, feel, 'hat'));
+});
+
+test('a part that drags is late on average, and one that rushes is early', () => {
+  const mean = (push) => {
+    const feel = normalizeHumanize({ amount: 1, parts: { bass: { spread: 0.5, push } } });
+    const offsets = Array.from({ length: 128 }, (_, step) => humanizeOffset('bass', step, feel));
+    return offsets.reduce((sum, o) => sum + o, 0) / offsets.length;
+  };
+  assert.ok(mean(1) > 0.15, 'dragging sits behind the beat');
+  assert.ok(mean(-1) < -0.15, 'rushing sits in front of it');
+  assert.ok(Math.abs(mean(0)) < 0.05, 'and on the beat is on the beat');
+});
+
+test('turning the master down turns every player down with it', () => {
+  const loose = normalizeHumanize({ amount: 1 });
+  const tight = normalizeHumanize({ amount: 0.25 });
+  for (let step = 1; step < 16; step++) {
+    assert.ok(
+      Math.abs(humanizeOffset('melody', step, tight)) <= Math.abs(humanizeOffset('melody', step, loose)) + 1e-9,
+    );
+  }
+  assert.equal(humanizeOffset('melody', 3, normalizeHumanize({ amount: 0 })), 0);
+});
+
+test('rush and lag are described in words a drummer would use', () => {
+  assert.equal(pushLabel(0), 'on the beat');
+  assert.match(pushLabel(-0.8), /rushing/);
+  assert.match(pushLabel(0.8), /dragging/);
+});
+
+// --- tuning -----------------------------------------------------------------
+
+test('twelve equal divisions is the piano, and changes nothing', () => {
+  const tuning = defaultTuning();
+  assert.equal(isEqualTempered(tuning), true);
+  for (let midi = 48; midi < 72; midi++) assert.equal(temperamentCents(midi, tuning, 0), 0);
+  assert.equal(noteCents({ part: 'lead', midi: 60, tuning }), 0);
+});
+
+test('a finer ladder moves the notes of the key but never the tonic', () => {
+  const tuning = normalizeTuning({ system: 'equal', divisions: 19 });
+  assert.equal(isEqualTempered(tuning), false);
+  // Tonic and octave are exact whatever the division; the third is not.
+  assert.equal(temperamentCents(60, tuning, 0), 0);
+  assert.equal(temperamentCents(72, tuning, 0), 0);
+  assert.ok(temperamentCents(64, tuning, 0) < -15, '19-EDO flattens the major third');
+  assert.ok(temperamentCents(63, tuning, 0) > 15, 'and sharpens the minor one');
+  // 24 divisions contains the 12, so every note lands back on the piano.
+  const quarter = normalizeTuning({ system: 'equal', divisions: 24 });
+  for (let midi = 60; midi < 72; midi++) assert.equal(temperamentCents(midi, quarter, 0), 0);
+});
+
+test('an unequal temperament is measured from the key, not from C', () => {
+  const just = normalizeTuning({ system: 'just' });
+  // In A, the A is in tune and its fifth is the pure one.
+  assert.equal(temperamentCents(69, just, 9), 0);
+  assert.ok(Math.abs(temperamentCents(76, just, 9) - 1.96) < 0.01, 'a pure fifth is two cents wide');
+  assert.ok(Math.abs(temperamentCents(73, just, 9) + 13.69) < 0.01, 'and a pure major third is flat');
+  // The same note in a different key is a different distance from home.
+  assert.notEqual(temperamentCents(73, just, 0), temperamentCents(73, just, 9));
+});
+
+test('detune puts every instrument slightly out, and keeps them there', () => {
+  const tuning = normalizeTuning({ system: 'equal', detune: 20, seed: 'band' });
+  const parts = ['lead', 'harmony', 'bass'].map((part) => partDetuneCents(part, tuning));
+  assert.ok(parts.every((cents) => Math.abs(cents) <= 20), 'nobody is more than the slider says');
+  assert.ok(parts.some((cents) => cents !== 0), 'and somebody is out');
+  assert.equal(new Set(parts.map((c) => c.toFixed(6))).size, 3, 'each in their own direction');
+  // Same seed, same band: the tuning does not shift between plays.
+  assert.equal(partDetuneCents('bass', tuning), parts[2]);
+  assert.notEqual(partDetuneCents('bass', { ...tuning, seed: 'other' }), parts[2]);
+  assert.equal(partDetuneCents('bass', normalizeTuning({ detune: 0 })), 0);
+});
+
+test('drift moves a note without moving the instrument', () => {
+  const tuning = normalizeTuning({ system: 'equal', drift: 10, seed: 'wobble' });
+  const cents = [60, 64, 67].map((midi) => noteCents({
+    part: 'lead', midi, step: 0, tuning,
+  }));
+  assert.ok(cents.some((c) => c !== 0));
+  assert.ok(cents.every((c) => Math.abs(c) <= 10));
+  // A held chord does not bend as one lump.
+  assert.equal(new Set(cents.map((c) => c.toFixed(6))).size, 3);
+  // The same note in the same bar is the same wobble, though.
+  assert.equal(noteCents({ part: 'lead', midi: 60, step: 0, tuning }), cents[0]);
+});
+
+test('the tuning describes itself in words', () => {
+  assert.match(tuningLabel(defaultTuning()), /piano/);
+  assert.equal(tuningLabel({ system: 'equal', divisions: 31 }), '31 equal divisions of the octave');
+  assert.equal(tuningLabel({ system: 'just' }), 'Just intonation');
+});
+
+// --- the three of them, in an exported file ---------------------------------
+
+test('an export carries the time signature it was counted in', () => {
+  const bytes = songToMidi({
+    tempo: 100,
+    meter: { beats: 7, unit: 8 },
+    melody: [{ midi: 72, step: 0, length: 2 }],
+  });
+  const meta = readMidi(bytes).flat().filter((e) => e.status === 0xff && e.type === 0x58);
+  assert.equal(meta.length, 1, 'once, in the tempo track');
+  // 7/8: seven of them, and eight is two to the power of three.
+  assert.deepEqual([...meta[0].data].slice(0, 2), [7, 3]);
+});
+
+test('a humanised export is the take that was played, not a tidy one', () => {
+  const song = {
+    tempo: 100,
+    melody: Array.from({ length: 8 }, (_, i) => ({ midi: 72, step: i * 2, length: 2 })),
+  };
+  const onsets = (feel) => readMidi(songToMidi({ ...song, feel }))
+    .flat()
+    .filter((e) => (e.status & 0xf0) === 0x90)
+    .map((e) => e.tick);
+
+  const straight = onsets(null);
+  const loose = onsets(normalizeHumanize({ amount: 1, seed: 'take' }));
+  assert.notDeepEqual(loose, straight, 'the notes moved');
+  assert.deepEqual(loose, onsets(normalizeHumanize({ amount: 1, seed: 'take' })), 'and moved the same way twice');
+  // Off the grid, not off the rails: within a third of a step of where it was.
+  loose.forEach((tick, i) => assert.ok(Math.abs(tick - straight[i]) <= 0.3 * 120 + 1));
+});
+
+test('a microtonal export bends the notes onto their real pitches', () => {
+  const song = {
+    tempo: 100,
+    rootPc: 0,
+    melody: [{ midi: 64, step: 0, length: 4 }],
+    bass: [{ midi: 40, step: 0, length: 4 }],
+    chordVoicings: [[60, 64, 67]],
+    stepsPerChord: 16,
+  };
+  const bends = (tuning) => readMidi(songToMidi({ ...song, tuning }))
+    .flat()
+    .filter((e) => (e.status & 0xf0) === 0xe0);
+
+  assert.deepEqual(bends(null), [], 'equal temperament needs no bending');
+  const microtonal = bends(normalizeTuning({ system: 'equal', divisions: 19 }));
+  // The melody and the bass are monophonic, so each can be bent on its own; a
+  // chord voicing on one channel cannot, and is left on the nearest keys.
+  assert.deepEqual(microtonal.map((e) => e.status & 0x0f), [1, 2]);
+  // A 19-EDO major third is flat, so the wheel goes down from centre.
+  const value = (e) => (e.data[1] << 7) | e.data[0];
+  assert.ok(value(microtonal[0]) < 8192);
+  // And the file says what the wheel means, rather than hoping.
+  const rpn = readMidi(songToMidi({ ...song, tuning: normalizeTuning({ system: 'equal', divisions: 19 }) }))
+    .flat()
+    .filter((e) => (e.status & 0xf0) === 0xb0)
+    .map((e) => [...e.data]);
+  assert.deepEqual(rpn.slice(0, 4), [[101, 0], [100, 0], [6, 2], [38, 0]]);
+});
+
+test('a loop in five is five beats long, not four', () => {
+  const song = arrange({
+    stepsPerBar: 20,
+    melody: [{ midi: 60, step: 0, length: 2 }],
+  });
+  assert.equal(song.totalSteps, 20, 'a bar of five-four is the shortest a loop gets');
+});
+
+test('every pitched event knows the key it was written in', () => {
+  const song = arrange({
+    rootPc: 9,
+    chordVoicings: [[57, 60, 64]],
+    stepsPerChord: 16,
+    melody: [{ midi: 72, step: 0, length: 4 }],
+    bass: [{ midi: 45, step: 0, length: 4 }],
+  });
+  assert.equal(song.chords[0].rootPc, 9);
+  assert.equal(song.melody[0].rootPc, 9);
+  assert.equal(song.bass[0].rootPc, 9);
+});
+
+test('a song in two keys tunes each section to its own tonic', () => {
+  const a = testSection('A', 'Am', { melody: [{ midi: 72, step: 0, length: 4 }], music: { rootPc: 9 } });
+  const b = testSection('B', 'C', { melody: [{ midi: 72, step: 0, length: 4 }], music: { rootPc: 0 } });
+  const plan = buildSongPlan([a, b], [{ sectionId: a.id }, { sectionId: b.id }]);
+  const laid = arrange({ sections: plan.blocks.map((block) => block.song) });
+  assert.deepEqual([...new Set(laid.melody.map((n) => n.rootPc))], [9, 0]);
+});
+
+test('a tambourine in six-eight lands on an eighth, not between two', () => {
+  const offbeats = (meter) => generateRhythm({
+    rng: makeRng('off'), meter, bars: 1, style: 'backbeat', trackIds: ['tamb'],
+  }).tracks[0].pattern.flatMap((on, i) => (on ? [i] : []));
+
+  // 4/4: the "and" of each beat, two sixteenths in.
+  assert.deepEqual(offbeats({ beats: 4, unit: 4 }), [2, 6, 10, 14]);
+  // 6/8: the third eighth of each dotted beat. A tambourine on step 3 would be
+  // playing a sixteenth nobody is counting.
+  assert.deepEqual(offbeats({ beats: 6, unit: 8 }), [4, 10]);
 });

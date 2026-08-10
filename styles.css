@@ -489,6 +489,60 @@ details[open] summary { margin-bottom: 0.5rem; }
 .transport .field.inline input[type="range"] { width: 6rem; }
 .parts { display: flex; gap: 0.75rem; flex-wrap: wrap; }
 
+/* The time signature, written the way it is written on paper. */
+.meter input[type="number"] { width: 3.2rem; text-align: center; }
+.meter select { width: auto; padding-right: 0.3rem; }
+.meter .over { color: var(--ink-faint); }
+.meter .hint { white-space: nowrap; }
+
+/* ---------- transport drawers ---------- */
+
+/* Feel and tuning belong to the whole song rather than to any one tab, so they
+   live in the transport — in a drawer that opens upwards over the page.
+
+   The drawers themselves are deliberately *not* positioned: the transport is,
+   so an absolutely positioned body inside one is laid out against the whole
+   transport bar. It therefore opens against the right-hand edge of the window
+   and the top of the bar, wherever the summary that opened it happens to have
+   wrapped to. */
+.drawers { display: flex; gap: 0.4rem; }
+.drawer > summary { list-style: none; display: inline-block; }
+.drawer > summary::-webkit-details-marker { display: none; }
+.drawer[open] > summary { background: #302f24; color: var(--ink); }
+.drawer[open] > summary::after { content: " ▾"; }
+
+.drawer-body {
+  position: absolute;
+  bottom: calc(100% + 0.6rem);
+  right: 0;
+  z-index: 20;
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: min(70vh, 34rem);
+  overflow-y: auto;
+  padding: 1rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+}
+.drawer-body .section-label { margin-bottom: 0.5rem; }
+.drawer-body .section-label:not(:first-child) { margin-top: 1.1rem; }
+.drawer-body .hint { display: block; margin-bottom: 0.75rem; }
+
+/* One row per player: how far off the grid, and which side of it. */
+.feel-parts {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  gap: 0.35rem 0.7rem;
+  align-items: center;
+  margin-bottom: 0.85rem;
+}
+.feel-parts .part-name { font-size: 0.8rem; color: var(--ink-dim); }
+.feel-parts .head { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-faint); }
+.feel-parts .cell { display: flex; flex-direction: column; gap: 0.1rem; }
+.feel-parts input[type="range"] { width: 100%; }
+.feel-parts output { font-size: 0.68rem; }
+
 .colophon {
   padding: 2rem clamp(1rem, 4vw, 2.5rem) 1rem;
   color: var(--ink-faint);
