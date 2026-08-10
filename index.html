@@ -213,6 +213,36 @@
       </fieldset>
 
       <fieldset>
+        <legend>Bass</legend>
+        <label class="check"><input type="checkbox" id="bass-on" checked> Play a bass part</label>
+        <div id="bass-controls">
+          <label class="field">
+            <span>Style</span>
+            <select id="bass-style"></select>
+            <small id="bass-hint" class="hint"></small>
+          </label>
+          <label class="field slider">
+            <span>Density <output id="out-bass-density"></output></span>
+            <input type="range" id="bass-density" min="0" max="1" step="0.05" value="0.5">
+          </label>
+          <label class="field slider">
+            <span>Root ↔ walking <output id="out-bass-motion"></output></span>
+            <input type="range" id="bass-motion" min="0" max="1" step="0.05" value="0.5">
+          </label>
+          <label class="field slider">
+            <span>Against the melody <output id="out-bass-counter"></output></span>
+            <input type="range" id="bass-counter" min="0" max="1" step="0.05" value="0.5">
+          </label>
+          <label class="field"><span>Register</span><select id="bass-octave"></select></label>
+          <small class="hint">
+            The bass takes its rhythm from the kick and its notes from the chords, leaning into
+            each change and answering the fills. <em>Against the melody</em> is how hard it works
+            to move the opposite way and stay off the note the tune is on.
+          </small>
+        </div>
+      </fieldset>
+
+      <fieldset>
         <legend>Sound</legend>
         <div class="field">
           <span>Melody instrument</span>
@@ -229,6 +259,14 @@
             <button type="button" class="btn ghost" id="hear-harmony" title="Hear it">▶</button>
           </div>
           <small id="harmony-hint" class="hint"></small>
+        </div>
+        <div class="field">
+          <span>Bass instrument</span>
+          <div class="row">
+            <select id="bass-instrument" class="grow"></select>
+            <button type="button" class="btn ghost" id="hear-bass" title="Hear it">▶</button>
+          </div>
+          <small id="bass-instrument-hint" class="hint"></small>
         </div>
         <small class="hint">
           “From the seed” takes the instrument from the seed too, so every new progression or melody
@@ -252,6 +290,13 @@
             <button type="button" class="btn ghost" id="new-melody-seed" title="New random melody seed">🎲</button>
           </div>
         </div>
+        <div class="field">
+          <span>Bass</span>
+          <div class="row">
+            <input type="text" id="bass-seed" class="grow" aria-label="Bass seed">
+            <button type="button" class="btn ghost" id="new-bass-seed" title="New random bass seed">🎲</button>
+          </div>
+        </div>
         <small class="hint">The same seed and settings always give the same result, so write down the ones you like. Transforms and hand edits sit on top of what the seed produced.</small>
       </fieldset>
     </div>
@@ -260,6 +305,7 @@
       <div class="output-head">
         <button type="button" class="btn primary" id="gen-chords">✂ New progression</button>
         <button type="button" class="btn" id="gen-melody">New melody</button>
+        <button type="button" class="btn" id="gen-bass">New bass</button>
         <div class="spacer"></div>
         <button type="button" class="btn" id="save-section-quick" title="Put this idea in the section drawer">＋ Save as section</button>
         <button type="button" class="btn ghost" id="copy-chords">Copy chords</button>
@@ -282,6 +328,8 @@
         Hand edits are kept as deviations from the generated line: they show up
         <span class="swatch edited"></span> green over the dashed ghost of where the note started, and
         “Reset to generated” gives you the original back. Grey lines are bars; the highlighted row is the key's root.
+        The <span class="swatch bass"></span> blue notes along the bottom are the bass — it is written
+        against the drums and the melody rather than by hand, so roll it rather than dragging it.
       </small>
     </div>
   </div>
@@ -420,6 +468,7 @@
   <div class="parts">
     <label class="check"><input type="checkbox" id="part-chords" checked> Chords</label>
     <label class="check"><input type="checkbox" id="part-melody" checked> Melody</label>
+    <label class="check"><input type="checkbox" id="part-bass" checked> Bass</label>
     <label class="check"><input type="checkbox" id="part-drums" checked> Drums</label>
   </div>
   <div class="spacer"></div>

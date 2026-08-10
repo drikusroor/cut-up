@@ -113,18 +113,52 @@ it — a delta on a note, a note struck out, a note drawn in. So:
 - Rerolling the melody starts you clean: a new line is a new set of notes, and
   deltas aimed at the old ones would land on strangers.
 
+### The bass
+
+The bass is optional — one checkbox in the **Bass** box — and it is the only
+part written against the others rather than on its own. It looks in three
+directions at once:
+
+- **At the kit.** Its onsets are read off the drum pattern, so wherever the kick
+  moves the bass moves with it. Change the drums and the line is rewritten
+  against the new ones, from the same seed; toggle a kick step by hand and the
+  bass follows it, while toggling a hat leaves the line exactly where it was,
+  because it was never listening to that.
+- **At the melody.** Pitches are scored against whatever the tune is doing at
+  that moment — go the other way when it moves, stay off the note it is already
+  sitting on, and never land a semitone under it. That is the *Against the
+  melody* slider.
+- **At the chords.** Every chord change gets a note under it, and the note
+  before a change is usually an approach into the root of the next one: a
+  semitone below, a step in the key, or the fifth above falling onto it. It also
+  *leans* into changes — hitting the new root an eighth early and holding it over
+  the bar line — and answers a tom fill or a crash by getting busy with it.
+
+Five styles: **root notes** (foundation and nothing else), **locked to the
+kick** (plays where the kick plays), **walking** (a note on every beat, walking
+into the next root), **driving eighths**, and **counterpoint** (fills the gaps
+the melody leaves). *Root ↔ walking* is how far it strays from the root and how
+hard it leans; *density* is how many notes; *register* is which octave it sits
+in. It has its own seed, so you can keep a bass line you like while rolling the
+melody, or roll it on its own until it sits right.
+
+It is drawn in the piano roll too, in blue underneath the melody, so you can see
+the counterpoint. It is not draggable — it is written against two other parts,
+so it is rolled rather than edited.
+
 ### Sound
 
-The melody and the chords each get their own instrument, chosen in the **Sound**
+Each of the three pitched parts gets its own instrument, chosen in the **Sound**
 box. Nine voices for the melody — saw lead, square bleep, plucked string, FM
-bell, breathy flute, electric organ, synth brass, glass, vox — and nine for the
+bell, breathy flute, electric organ, synth brass, glass, vox — nine for the
 harmony underneath: warm pad, strings, electric piano, drawbar organ, nylon
-guitar, choir, glass bells, brass section, marimba. All synthesised, no samples;
+guitar, choir, glass bells, brass section, marimba — and seven for the bass:
+fingered, sub, picked, upright, synth, acid, FM. All synthesised, no samples;
 each one is a stack of oscillators, an envelope and a filter, described as data
-in `src/music/instruments.js`, so adding a tenth is adding a recipe rather than
+in `src/music/instruments.js`, so adding another is adding a recipe rather than
 writing code. ▶ next to each box plays it.
 
-Both boxes default to **🎲 From the seed**, which takes the instrument from the
+All three default to **🎲 From the seed**, which takes the instrument from the
 same seed that produced the notes. So a new progression arrives in a new
 harmony, a new melody arrives in a new voice — and typing an old seed back in
 brings its instrument back with it. Pin one from the list if you want to keep
@@ -136,8 +170,8 @@ A loop is not a song. The **Song** tab keeps a drawer of *sections* and the
 running order you build out of them.
 
 **Save as section** freezes everything the Chords and Rhythm tabs are showing —
-key, progression, melody, your hand edits, the drum pattern, and every seed —
-under a name. Body sections are named A, B, C as you go; intros, middle eights
+key, progression, melody, your hand edits, the bass line, the drum pattern, and
+every seed — under a name. Body sections are named A, B, C as you go; intros, middle eights
 and outros take their role as a name. Then carry on working: the drawer keeps
 the old one.
 
@@ -155,10 +189,11 @@ everything you have saved in the obvious order — intro, sections, middle eight
 outro. A song is therefore an optional intro, one or more sections, and an
 optional outro, with anything in between you care to put there.
 
-Sections carry their own key, chords, melody, drum pattern *and instruments*, so
-the kit and the harmony really do change with the section — the shelf prints the
-three voices under each card. A section stores the *choice* rather than the
-result, so one left on "from the seed" re-derives its sound from its own seeds:
+Sections carry their own key, chords, melody, bass, drum pattern *and
+instruments*, so the kit and the harmony really do change with the section — the
+shelf prints the voices under each card. A section stores the *choice* rather
+than the result, so one left on "from the seed" re-derives its sound from its
+own seeds:
 every section you roll turns up in a different colour, and none of them drift
 when you go back to them. Tempo, swing and which parts sound stay global — they
 live in the transport.
@@ -193,7 +228,8 @@ Every tab has its own seed box, and every generator runs off it, so the same
 seed and settings always give back the same words, chords, melody or pattern.
 Write down the ones you like; type one back in to hear it again. The dice
 button rolls a fresh seed for that part alone — a new progression under the
-same melody idea, or a new melody over chords you want to keep.
+same melody idea, a new melody over chords you want to keep, or a new bass line
+under both.
 
 Melody transforms, rhythm cut-ups and hand-edited steps are changes made *on
 top* of what the seed produced, so they are not replayed by it — and a saved
@@ -212,8 +248,8 @@ Play follows the tab you are on: on Chords or Rhythm it loops the idea in front
 of you, and on the Song tab it plays the arrangement from the top, section by
 section. The readout next to Export MIDI tells you which.
 
-**Export MIDI** writes a type-1 file with chords, melody and drums on separate
-tracks (drums on channel 10), swing baked in, ready to drag into any DAW — the
+**Export MIDI** writes a type-1 file with chords, melody, bass and drums on
+separate tracks (drums on channel 10), swing baked in, ready to drag into any DAW — the
 loop, or the whole song if that is what you are playing. Each instrument carries
 a General MIDI program number, so the file opens on roughly the patch you were
 hearing; a song whose sections change voice writes a program change at each
@@ -222,7 +258,7 @@ join.
 ## Development
 
 ```sh
-npm test                        # 72 unit tests, no dependencies
+npm test                        # 84 unit tests, no dependencies
 node tools/build-wordlists.mjs  # regenerate data/words.*.json
 ```
 
@@ -238,8 +274,9 @@ src/
   music/
     theory.js       scales, chords, progressions, voicing, chord parsing
     melody.js       melody generation, cut-up transforms, the hand-edit ledger
+    bass.js         the bass line, written against the drums and the melody
     rhythm.js       euclidean and friends, and the kit written by role
-    instruments.js  synth recipes for lead, harmony and the drum kits
+    instruments.js  synth recipes for lead, harmony, bass and the drum kits
     sections.js     saved sections and the running order built from them
     arrange.js      lays the parts out over the loop, or sections end to end
     midi.js         a small type-1 MIDI writer

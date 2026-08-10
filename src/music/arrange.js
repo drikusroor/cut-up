@@ -11,12 +11,12 @@
 /** The natural length of a song in steps: however long its longest part is. */
 export function naturalSteps(song) {
   const {
-    chordVoicings = [], stepsPerChord = 16, melody = [], rhythm = null,
+    chordVoicings = [], stepsPerChord = 16, melody = [], bass = [], rhythm = null,
   } = song || {};
   const chordSpan = chordVoicings.length * stepsPerChord;
   const drumSpan = rhythm?.tracks?.[0]?.pattern.length ?? 0;
-  const melodyEnd = melody.reduce((max, note) => Math.max(max, note.step + note.length), 0);
-  return Math.max(chordSpan, drumSpan, melodyEnd, 16);
+  const end = (notes) => notes.reduce((max, note) => Math.max(max, note.step + note.length), 0);
+  return Math.max(chordSpan, drumSpan, end(melody), end(bass), 16);
 }
 
 /**
@@ -24,13 +24,15 @@ export function naturalSteps(song) {
  * @param {number[][]} [song.chordVoicings] MIDI notes per chord
  * @param {number} [song.stepsPerChord]
  * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.melody]
+ * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.bass]
  * @param {{tracks: Array<{id:string, note:number, pattern:boolean[], velocities:number[]}>}} [song.rhythm]
- * @param {{lead?:string, harmony?:string, kit?:string}} [song.instruments]
+ * @param {{lead?:string, harmony?:string, bass?:string, kit?:string}} [song.instruments]
  * @param {number} [song.totalSteps] loop length; defaults to the longest part
  * @returns {{
  *   totalSteps: number,
  *   chords: Array<{voicing:number[], step:number, length:number, instrument?:string}>,
  *   melody: Array<{midi:number, step:number, length:number, velocity?:number, instrument?:string}>,
+ *   bass: Array<{midi:number, step:number, length:number, velocity?:number, instrument?:string}>,
  *   drums: Array<{id:string, note:number, step:number, velocity:number, kit?:string}>,
  * }}
  */
@@ -41,6 +43,7 @@ export function arrange(song) {
     chordVoicings = [],
     stepsPerChord = 16,
     melody = [],
+    bass = [],
     rhythm = null,
     // Every event is tagged with the voice it should be played on, so a song
     // strung together from sections can change instruments as it goes.
@@ -49,10 +52,10 @@ export function arrange(song) {
 
   const chordSpan = chordVoicings.length * stepsPerChord;
   const drumSpan = rhythm?.tracks?.[0]?.pattern.length ?? 0;
-  const melodyEnd = melody.reduce((max, note) => Math.max(max, note.step + note.length), 0);
-  // The melody is written against the progression, so the two repeat together
-  // even when the melody itself stops short of the last chord.
-  const melodySpan = Math.max(chordSpan, melodyEnd);
+  const end = (notes) => notes.reduce((max, note) => Math.max(max, note.step + note.length), 0);
+  // The melody and the bass are written against the progression, so all three
+  // repeat together even when the notes stop short of the last chord.
+  const melodySpan = Math.max(chordSpan, end(melody), end(bass));
   const totalSteps = song?.totalSteps || Math.max(chordSpan, drumSpan, melodySpan, 16);
 
   const chords = [];
@@ -68,19 +71,21 @@ export function arrange(song) {
     }
   }
 
-  const melodyOut = [];
-  for (let offset = 0; melodySpan > 0 && offset < totalSteps; offset += melodySpan) {
-    for (const note of melody) {
-      const step = offset + note.step;
-      if (step >= totalSteps) continue;
-      melodyOut.push({
-        ...note,
-        step,
-        length: Math.min(note.length, totalSteps - step),
-        instrument: instruments.lead,
-      });
+  /** Repeats a pitched part until it covers the loop, clipping the overhang. */
+  const layOut = (notes, instrument) => {
+    const out = [];
+    for (let offset = 0; melodySpan > 0 && offset < totalSteps; offset += melodySpan) {
+      for (const note of notes) {
+        const step = offset + note.step;
+        if (step >= totalSteps) continue;
+        out.push({ ...note, step, length: Math.min(note.length, totalSteps - step), instrument });
+      }
     }
-  }
+    return out;
+  };
+
+  const melodyOut = layOut(melody, instruments.lead);
+  const bassOut = layOut(bass, instruments.bass);
 
   const drums = [];
   for (let offset = 0; drumSpan > 0 && offset < totalSteps; offset += drumSpan) {
@@ -99,7 +104,9 @@ export function arrange(song) {
     }
   }
 
-  return { totalSteps, chords, melody: melodyOut, drums };
+  return {
+    totalSteps, chords, melody: melodyOut, bass: bassOut, drums,
+  };
 }
 
 /**
@@ -112,6 +119,7 @@ export function arrange(song) {
 function arrangeSections(song) {
   const chords = [];
   const melody = [];
+  const bass = [];
   const drums = [];
   let offset = 0;
 
@@ -123,10 +131,13 @@ function arrangeSections(song) {
     for (let pass = 0; pass < repeats; pass++) {
       for (const chord of block.chords) chords.push({ ...chord, step: chord.step + offset });
       for (const note of block.melody) melody.push({ ...note, step: note.step + offset });
+      for (const note of block.bass) bass.push({ ...note, step: note.step + offset });
       for (const hit of block.drums) drums.push({ ...hit, step: hit.step + offset });
       offset += block.totalSteps;
     }
   }
 
-  return { totalSteps: Math.max(offset, 16), chords, melody, drums };
+  return {
+    totalSteps: Math.max(offset, 16), chords, melody, bass, drums,
+  };
 }

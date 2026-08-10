@@ -19,7 +19,9 @@ function defaultState() {
     tab: 'words',
     tempo: 96,
     swing: 0,
-    parts: { chords: true, melody: true, drums: true },
+    parts: {
+      chords: true, melody: true, bass: true, drums: true,
+    },
     words: {
       lang: 'en',
       text: '',
@@ -67,9 +69,19 @@ function defaultState() {
       restiness: 0.2,
       rangeLow: 60,
       rangeHigh: 84,
+      // The bass: optional, written against the drums and the melody at once.
+      bassOn: true,
+      bassStyle: 'walk',
+      bassSeed: '',
+      bass: [],
+      bassDensity: 0.5,
+      bassMotion: 0.5,
+      bassCounter: 0.5,
+      bassOctave: 2,
       // 'auto' means "whatever the seed says", so a new roll is a new sound.
       leadInstrument: AUTO,
       harmonyInstrument: AUTO,
+      bassInstrument: AUTO,
     },
     rhythm: {
       style: 'euclid',
@@ -145,6 +157,10 @@ ctx.syncInstruments();
 
 initWords(ctx);
 const chordsPanel = initChords(ctx);
+// The bass is written against the drums, so a new pattern is a new bass line.
+// It has to be hooked up before the Rhythm tab boots, because booting it
+// generates a pattern.
+ctx.onRhythmChange = () => chordsPanel.rebuildBass();
 const rhythmPanel = initRhythm(ctx);
 const songPanel = initSong(ctx, { chords: chordsPanel, rhythm: rhythmPanel });
 
@@ -195,7 +211,7 @@ swingInput.addEventListener('change', () => {
   if (audio.playing) startPlayback();
 });
 
-for (const part of ['chords', 'melody', 'drums']) {
+for (const part of ['chords', 'melody', 'bass', 'drums']) {
   const box = $(`#part-${part}`);
   box.checked = state.parts[part];
   box.addEventListener('change', () => {
@@ -210,15 +226,17 @@ function buildLoop() {
   const m = state.music;
   const totalChordSteps = m.chords.length * m.stepsPerChord;
   const drumSteps = state.rhythm.pattern?.tracks?.[0]?.pattern.length ?? 0;
-  const melodySteps = m.melody.reduce((max, n) => Math.max(max, n.step + n.length), 0);
+  const end = (notes) => notes.reduce((max, n) => Math.max(max, n.step + n.length), 0);
+  const bass = m.bassOn ? m.bass : [];
   return {
     chordVoicings: m.voicings,
     stepsPerChord: m.stepsPerChord,
     melody: m.melody,
+    bass,
     rhythm: state.rhythm.pattern,
     instruments: resolveInstruments(m, state.rhythm),
     // Loop over whichever part is longest; the shorter ones repeat to fill it.
-    totalSteps: Math.max(totalChordSteps, drumSteps, melodySteps, 16),
+    totalSteps: Math.max(totalChordSteps, drumSteps, end(m.melody), end(bass), 16),
   };
 }
 
@@ -249,6 +267,7 @@ function applyParts(song, parts) {
     ...song,
     chordVoicings: parts.chords ? (song.chordVoicings || []) : [],
     melody: parts.melody ? (song.melody || []) : [],
+    bass: parts.bass ? (song.bass || []) : [],
     rhythm: parts.drums ? (song.rhythm || null) : null,
   };
 }
@@ -256,7 +275,8 @@ function applyParts(song, parts) {
 /** True when there is a single note anywhere in an unmuted part. */
 function hasAudibleContent(song) {
   if (song.sections) return song.sections.some(hasAudibleContent);
-  return Boolean(song.chordVoicings?.length || song.melody?.length || song.rhythm?.tracks?.length);
+  return Boolean(song.chordVoicings?.length || song.melody?.length
+    || song.bass?.length || song.rhythm?.tracks?.length);
 }
 
 let playbackScope = 'loop';

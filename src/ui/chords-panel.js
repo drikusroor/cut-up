@@ -14,14 +14,18 @@ import {
 } from '../music/theory.js';
 import {
   AUTO,
+  BASS_INSTRUMENTS,
+  bassInstrument,
   HARMONY_INSTRUMENTS,
   harmonyInstrument,
   instrumentOptions,
   LEAD_INSTRUMENTS,
   leadInstrument,
+  resolveBass,
   resolveHarmony,
   resolveLead,
 } from '../music/instruments.js';
+import { BASS_REGISTERS, BASS_STYLES, generateBass } from '../music/bass.js';
 import {
   applyMelodyEdits,
   EDIT_RANGE,
@@ -55,24 +59,35 @@ export function initChords(ctx) {
     rangeLow: $('#range-low'),
     rangeHigh: $('#range-high'),
     transforms: $('#melody-transforms'),
+    bassOn: $('#bass-on'),
+    bassControls: $('#bass-controls'),
+    bassStyle: $('#bass-style'),
+    bassHint: $('#bass-hint'),
+    bassOctave: $('#bass-octave'),
     out: $('#chords-out'),
     roll: $('#piano-roll'),
     genChords: $('#gen-chords'),
     genMelody: $('#gen-melody'),
+    genBass: $('#gen-bass'),
     copy: $('#copy-chords'),
     chordSeed: $('#chord-seed'),
     melodySeed: $('#melody-seed'),
+    bassSeed: $('#bass-seed'),
     newChordSeed: $('#new-chord-seed'),
     newMelodySeed: $('#new-melody-seed'),
+    newBassSeed: $('#new-bass-seed'),
     undoEdit: $('#undo-melody-edit'),
     resetEdits: $('#reset-melody-edits'),
     editStatus: $('#melody-edit-status'),
     lead: $('#lead-instrument'),
     harmony: $('#harmony-instrument'),
+    bass: $('#bass-instrument'),
     leadHint: $('#lead-hint'),
     harmonyHint: $('#harmony-hint'),
+    bassInstrumentHint: $('#bass-instrument-hint'),
     hearLead: $('#hear-lead'),
     hearHarmony: $('#hear-harmony'),
+    hearBass: $('#hear-bass'),
   };
 
   const sliders = ['sevenths', 'spice'];
@@ -80,6 +95,11 @@ export function initChords(ctx) {
     ['mel-density', 'density'],
     ['chordTones', 'chordTones'],
     ['restiness', 'restiness'],
+  ];
+  const bassSliders = [
+    ['bass-density', 'bassDensity'],
+    ['bass-motion', 'bassMotion'],
+    ['bass-counter', 'bassCounter'],
   ];
 
   // --- populate selects -----------------------------------------------------
@@ -101,11 +121,15 @@ export function initChords(ctx) {
   fillSelect(ui.rangeHigh, noteOptions, m.rangeHigh);
   fillSelect(ui.lead, instrumentOptions(LEAD_INSTRUMENTS), m.leadInstrument);
   fillSelect(ui.harmony, instrumentOptions(HARMONY_INSTRUMENTS), m.harmonyInstrument);
+  fillSelect(ui.bass, instrumentOptions(BASS_INSTRUMENTS), m.bassInstrument);
+  fillSelect(ui.bassStyle, BASS_STYLES.map((s) => ({ value: s.id, label: s.label })), m.bassStyle);
+  fillSelect(ui.bassOctave, BASS_REGISTERS, m.bassOctave);
 
   for (const id of sliders) bindSlider($(`#${id}`), $(`#out-${id}`), PERCENT);
   bindSlider($('#mel-density'), $('#out-density'), PERCENT);
   bindSlider($('#chordTones'), $('#out-chordTones'), PERCENT);
   bindSlider($('#restiness'), $('#out-restiness'), PERCENT);
+  for (const [id] of bassSliders) bindSlider($(`#${id}`), $(`#out-${id}`), PERCENT);
 
   ui.transforms.replaceChildren(
     ...MELODY_TRANSFORMS.map((t) => el('button', {
@@ -127,16 +151,22 @@ export function initChords(ctx) {
     ui.shape.value = m.melodyShape;
     ui.rangeLow.value = String(m.rangeLow);
     ui.rangeHigh.value = String(m.rangeHigh);
+    ui.bassOn.checked = Boolean(m.bassOn);
+    ui.bassStyle.value = m.bassStyle;
+    ui.bassOctave.value = String(m.bassOctave);
     // Before anything reads the controls, or the stored seeds look like blanks.
     ui.chordSeed.value = m.chordSeed;
     ui.melodySeed.value = m.melodySeed;
+    ui.bassSeed.value = m.bassSeed;
     ui.lead.value = m.leadInstrument || AUTO;
     ui.harmony.value = m.harmonyInstrument || AUTO;
+    ui.bass.value = m.bassInstrument || AUTO;
     syncSound();
+    syncBass();
     for (const id of sliders) $(`#${id}`).value = m[id];
-    for (const [id, key] of melodySliders) $(`#${id}`).value = m[key];
-    for (const input of [$('#sevenths'), $('#spice'), $('#mel-density'), $('#chordTones'), $('#restiness')]) {
-      input.dispatchEvent(new Event('input'));
+    for (const [id, key] of [...melodySliders, ...bassSliders]) $(`#${id}`).value = m[key];
+    for (const id of ['sevenths', 'spice', 'mel-density', 'chordTones', 'restiness', ...bassSliders.map(([x]) => x)]) {
+      $(`#${id}`).dispatchEvent(new Event('input'));
     }
   }
 
@@ -146,11 +176,18 @@ export function initChords(ctx) {
     ui.ownWrap.hidden = m.mode !== 'cutup';
   }
 
-  /** The two voices this idea is currently played with. */
+  function syncBass() {
+    const style = BASS_STYLES.find((s) => s.id === m.bassStyle);
+    ui.bassHint.textContent = style ? style.hint : '';
+    ui.bassControls.hidden = !m.bassOn;
+  }
+
+  /** The three voices this idea is currently played with. */
   function currentSound() {
     return {
       lead: resolveLead(m.leadInstrument, m.melodySeed),
       harmony: resolveHarmony(m.harmonyInstrument, m.chordSeed),
+      bass: resolveBass(m.bassInstrument, m.bassSeed),
     };
   }
 
@@ -165,6 +202,7 @@ export function initChords(ctx) {
       : spec.hint);
     ui.leadHint.textContent = describe(m.leadInstrument, leadInstrument(sound.lead));
     ui.harmonyHint.textContent = describe(m.harmonyInstrument, harmonyInstrument(sound.harmony));
+    ui.bassInstrumentHint.textContent = describe(m.bassInstrument, bassInstrument(sound.bass));
     ctx.syncInstruments?.();
   }
 
@@ -172,6 +210,7 @@ export function initChords(ctx) {
     // A seed the user has typed over wins; an empty box means "surprise me".
     m.chordSeed = ui.chordSeed.value.trim() || randomSeed();
     m.melodySeed = ui.melodySeed.value.trim() || randomSeed();
+    m.bassSeed = ui.bassSeed.value.trim() || randomSeed();
     m.rootPc = Number(ui.root.value);
     m.scaleId = ui.scale.value;
     m.mode = ui.mode.value;
@@ -183,9 +222,13 @@ export function initChords(ctx) {
     m.rangeHigh = Number(ui.rangeHigh.value);
     m.leadInstrument = ui.lead.value;
     m.harmonyInstrument = ui.harmony.value;
+    m.bassInstrument = ui.bass.value;
+    m.bassOn = ui.bassOn.checked;
+    m.bassStyle = ui.bassStyle.value;
+    m.bassOctave = Number(ui.bassOctave.value);
     if (m.rangeHigh < m.rangeLow + 7) m.rangeHigh = m.rangeLow + 7;
     for (const id of sliders) m[id] = Number($(`#${id}`).value);
-    for (const [id, key] of melodySliders) m[key] = Number($(`#${id}`).value);
+    for (const [id, key] of [...melodySliders, ...bassSliders]) m[key] = Number($(`#${id}`).value);
   }
 
   const totalSteps = () => Math.max(16, m.chords.length * m.stepsPerChord);
@@ -215,6 +258,7 @@ export function initChords(ctx) {
       ui.out.replaceChildren(el('p', { class: 'hint' }, ['Type a few chords above first — for example “Am F C G”.']));
       m.chords = [];
       m.voicings = [];
+      m.bass = [];
       renderRoll();
       return;
     }
@@ -251,8 +295,50 @@ export function initChords(ctx) {
     // land on strangers, so the ledger goes with them.
     discardEdits();
     refreshMelody();
+    // The bass is counterpoint to the melody, so a new melody wants a new one.
+    generateBassLine({ newSeed: false });
     renderRoll();
     save();
+  }
+
+  /**
+   * The bass line, written against three things at once: the progression, the
+   * drum pattern in the Rhythm tab, and the melody it has to keep out of the
+   * way of. Its own seed, so you can keep a bass line you like while rolling
+   * everything else — or roll it on its own until it sits right.
+   */
+  function generateBassLine({ newSeed = true } = {}) {
+    readControls();
+    if (newSeed) m.bassSeed = randomSeed();
+    ui.bassSeed.value = m.bassSeed;
+    syncSound();
+    if (!m.bassOn) {
+      m.bass = [];
+      return;
+    }
+    m.bass = generateBass({
+      rng: makeRng(`bass:${m.bassSeed}`),
+      chords: m.chords,
+      rootPc: m.rootPc,
+      scaleId: m.scaleId,
+      stepsPerChord: m.stepsPerChord,
+      style: m.bassStyle,
+      density: m.bassDensity,
+      motion: m.bassMotion,
+      counter: m.bassCounter,
+      octave: m.bassOctave,
+      rhythm: state.rhythm.pattern,
+      melody: m.melody,
+    });
+  }
+
+  /** Rolls the bass on its own, keeping the chords and the melody as they are. */
+  function rollBass({ newSeed = true } = {}) {
+    generateBassLine({ newSeed });
+    syncBass();
+    renderRoll();
+    save();
+    ctx.refreshPlayback?.();
   }
 
   function applyTransform(id) {
@@ -266,6 +352,8 @@ export function initChords(ctx) {
       range: [m.rangeLow, m.rangeHigh],
     });
     refreshMelody();
+    // The line the bass was answering has just been turned inside out.
+    generateBassLine({ newSeed: false });
     renderRoll();
     save();
   }
@@ -366,6 +454,7 @@ export function initChords(ctx) {
     const pitches = [
       ...m.melody.map((n) => n.midi),
       ...m.melodyBase.map((n) => n.midi),
+      ...(m.bassOn ? m.bass.map((n) => n.midi) : []),
       ...m.voicings.flat(),
       m.rangeLow,
       m.rangeHigh,
@@ -466,6 +555,25 @@ export function initChords(ctx) {
       );
     }
     g.setLineDash([]);
+
+    // The bass, underneath and in its own colour. It is drawn but not draggable
+    // — it is written against the melody and the drums, so it is rolled rather
+    // than edited.
+    if (m.bassOn) {
+      g.fillStyle = '#5b8dd6';
+      for (const note of m.bass) {
+        if (note.midi < low || note.midi > high) continue;
+        roundRect(
+          g,
+          note.step * stepWidth + 1,
+          (high - note.midi) * rowHeight + 1,
+          Math.max(3, note.length * stepWidth - 2),
+          Math.max(3, rowHeight - 2),
+          2,
+        );
+        g.fill();
+      }
+    }
 
     // Notes. Edited ones wear a different colour so the deviations stand out.
     for (const note of m.melody) {
@@ -665,6 +773,11 @@ export function initChords(ctx) {
 
   ui.genChords.addEventListener('click', () => generateChords({ newSeed: true }));
   ui.genMelody.addEventListener('click', () => generateMelodyLine({ newSeed: true }));
+  ui.genBass.addEventListener('click', () => {
+    if (!ui.bassOn.checked) ui.bassOn.checked = true;
+    rollBass({ newSeed: true });
+  });
+  ui.bassOn.addEventListener('change', () => rollBass({ newSeed: false }));
   ui.mode.addEventListener('change', () => { readControls(); syncMode(); save(); });
   ui.copy.addEventListener('click', () => {
     const flats = keyUsesFlats(m.rootPc, m.scaleId);
@@ -673,10 +786,11 @@ export function initChords(ctx) {
   ui.undoEdit.addEventListener('click', undoEdit);
   ui.resetEdits.addEventListener('click', resetEdits);
 
-  for (const select of [ui.lead, ui.harmony]) {
+  for (const select of [ui.lead, ui.harmony, ui.bass]) {
     select.addEventListener('change', () => {
       m.leadInstrument = ui.lead.value;
       m.harmonyInstrument = ui.harmony.value;
+      m.bassInstrument = ui.bass.value;
       syncSound();
       save();
       // Changing an instrument does not change a note, so nothing is
@@ -694,6 +808,13 @@ export function initChords(ctx) {
     const voicing = m.voicings[0] || [m.rootPc + 48, m.rootPc + 52, m.rootPc + 55];
     audio.strum(voicing, currentSound().harmony);
   });
+  // A root, its fifth and the octave, in the register the line is written in.
+  ui.hearBass.addEventListener('click', () => {
+    const root = 12 * (m.bassOctave + 1) + (m.rootPc % 12);
+    audio.audition(bassInstrument(currentSound().bass), [root, root + 7, root + 12, root], {
+      gap: 0.22, length: 0.4, gain: 0.22,
+    });
+  });
 
   for (const id of ['root', 'scale', 'prog-length', 'bars-per-chord', 'sevenths', 'spice']) {
     $(`#${id}`).addEventListener('change', () => generateChords({ newSeed: false }));
@@ -701,13 +822,18 @@ export function initChords(ctx) {
   for (const id of ['melody-shape', 'mel-density', 'chordTones', 'restiness', 'range-low', 'range-high']) {
     $(`#${id}`).addEventListener('change', () => generateMelodyLine({ newSeed: false }));
   }
+  for (const id of ['bass-style', 'bass-density', 'bass-motion', 'bass-counter', 'bass-octave']) {
+    $(`#${id}`).addEventListener('change', () => rollBass({ newSeed: false }));
+  }
   ui.own.addEventListener('change', () => generateChords({ newSeed: true }));
 
   // Typing a seed in replays it; the dice roll a fresh one for that part only.
   ui.chordSeed.addEventListener('change', () => generateChords({ newSeed: false }));
   ui.melodySeed.addEventListener('change', () => generateMelodyLine({ newSeed: false }));
+  ui.bassSeed.addEventListener('change', () => rollBass({ newSeed: false }));
   ui.newChordSeed.addEventListener('click', () => generateChords({ newSeed: true }));
   ui.newMelodySeed.addEventListener('click', () => generateMelodyLine({ newSeed: true }));
+  ui.newBassSeed.addEventListener('click', () => rollBass({ newSeed: true }));
 
   document.addEventListener('keydown', (event) => {
     if (state.tab !== 'chords' || !(event.ctrlKey || event.metaKey) || event.key !== 'z') return;
@@ -727,6 +853,8 @@ export function initChords(ctx) {
     m.voicings = voiceProgression(m.chords, { octave: 3 });
     renderChords();
     refreshMelody();
+    // Somebody who last used this before the bass existed still gets one.
+    if (m.bassOn && !m.bass.length) generateBassLine({ newSeed: false });
     renderRoll();
   } else {
     generateChords({ newSeed: true });
@@ -747,6 +875,17 @@ export function initChords(ctx) {
     redraw: renderRoll,
     /** New melody over the same chords — what forking a variation does. */
     rerollMelody: () => generateMelodyLine({ newSeed: true }),
+    /**
+     * The same bass line rewritten against whatever the drums are doing now.
+     * The Rhythm tab calls this whenever the pattern changes, which is what
+     * keeps the two parts moving together instead of merely coexisting.
+     */
+    rebuildBass() {
+      if (!m.bassOn || !m.chords.length) return;
+      generateBassLine({ newSeed: false });
+      renderRoll();
+      save();
+    },
     /** Re-reads state.music after a section has been loaded over it. */
     applyState() {
       undoStack.length = 0;

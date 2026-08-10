@@ -118,6 +118,8 @@ export function initRhythm(ctx) {
       trackIds: r.trackIds,
     });
     render();
+    // The bass part is written against the kick, so it has to hear about this.
+    ctx.onRhythmChange?.();
     save();
   }
 
@@ -139,6 +141,7 @@ export function initRhythm(ctx) {
       }),
     };
     render();
+    ctx.onRhythmChange?.();
     save();
     return undefined;
   }
@@ -174,6 +177,9 @@ export function initRhythm(ctx) {
             event.currentTarget.setAttribute('aria-pressed', String(track.pattern[step]));
             // Hear what you just drew in, the way a drum machine does.
             if (track.pattern[step]) audio.previewDrum(track.id, resolveKit(r.kit, r.seed));
+            // Moving the kick moves the bass with it; moving a hat leaves the
+            // bass exactly where it was, because it was never listening to it.
+            ctx.onRhythmChange?.();
             save();
           },
         })),
