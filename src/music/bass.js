@@ -22,8 +22,12 @@ import { chance, pickWeighted, randInt } from '../rng.js';
 import { trackRole } from './rhythm.js';
 import { scalePitchClasses } from './theory.js';
 
-/** The app's grid is sixteenths all the way through, so a beat is four steps. */
-const STEPS_PER_BEAT = 4;
+/**
+ * The app's grid is sixteenths all the way through, so a beat is four steps in
+ * four-four. Anything else says so — see meter.js — and the walk, the pump and
+ * the accents all move with it.
+ */
+const DEFAULT_STEPS_PER_BEAT = 4;
 
 export const BASS_STYLES = [
   { id: 'roots', label: 'Root notes', hint: 'The root of each chord and little else. Pure foundation.' },
@@ -41,13 +45,11 @@ export const BASS_REGISTERS = [
 ];
 
 /** How long a note is allowed to ring, per style, before it lets go. */
-const HOLD = {
-  roots: 32,
-  lock: STEPS_PER_BEAT,
-  walk: STEPS_PER_BEAT,
-  pump: 2,
-  counter: 8,
-};
+function holdFor(style, beat) {
+  return {
+    roots: beat * 8, lock: beat, walk: beat, pump: 2, counter: 8,
+  }[style] ?? beat;
+}
 
 /**
  * How much of the kick pattern each style takes on board. "Locked" takes nearly
@@ -77,6 +79,7 @@ const KICK_APPETITE = {
  * @param {number} [opts.rootPc] key root, for the passing notes
  * @param {string} [opts.scaleId]
  * @param {number} [opts.stepsPerChord]
+ * @param {number} [opts.stepsPerBeat] steps in one felt beat, from the meter
  * @param {string} [opts.style] one of BASS_STYLES
  * @param {number} [opts.density] 0..1 how many notes
  * @param {number} [opts.motion] 0..1 root-bound ↔ walking, and how hard it leans
@@ -95,6 +98,7 @@ export function generateBass(opts) {
     rootPc = 0,
     scaleId = 'major',
     stepsPerChord = 16,
+    stepsPerBeat = DEFAULT_STEPS_PER_BEAT,
     style = 'walk',
     density = 0.5,
     motion = 0.5,
@@ -107,6 +111,7 @@ export function generateBass(opts) {
   if (!chords.length) return [];
 
   const totalSteps = chords.length * stepsPerChord;
+  const beat = Math.max(1, Math.round(stepsPerBeat));
   const drums = readDrums(rhythm);
   const tune = readMelody(melody, totalSteps);
   const scalePcs = scalePitchClasses(rootPc, scaleId);
@@ -115,11 +120,11 @@ export function generateBass(opts) {
   const home = base + (((rootPc % 12) + 12) % 12);
 
   const marks = placeOnsets({
-    rng, style, density, motion, totalSteps, stepsPerChord, drums, tune,
+    rng, style, density, motion, totalSteps, stepsPerChord, beat, drums, tune,
   });
 
   return voiceLine({
-    rng, marks, chords, stepsPerChord, totalSteps, scalePcs, range, home, style, motion, counter, drums, tune,
+    rng, marks, chords, stepsPerChord, totalSteps, beat, scalePcs, range, home, style, motion, counter, drums, tune,
   });
 }
 
@@ -194,7 +199,9 @@ function readMelody(melody, totalSteps) {
  *   kick    the drummer put something here
  *   answer  a reply to a fill, or to a gap in the melody
  */
-function placeOnsets({ rng, style, density, motion, totalSteps, stepsPerChord, drums, tune }) {
+function placeOnsets({
+  rng, style, density, motion, totalSteps, stepsPerChord, beat, drums, tune,
+}) {
   const marks = new Map();
   const add = (step, kind) => {
     if (step < 0 || step >= totalSteps || marks.has(step)) return;
@@ -215,14 +222,14 @@ function placeOnsets({ rng, style, density, motion, totalSteps, stepsPerChord, d
   if (style === 'walk') {
     // The quarter-note walk. This one is not up for negotiation — it is the
     // style. Density buys the doubled-up eighths a player throws in on the way.
-    for (let step = 0; step < totalSteps; step += STEPS_PER_BEAT) add(step, 'beat');
-    for (let step = STEPS_PER_BEAT / 2; step < totalSteps; step += STEPS_PER_BEAT) {
+    for (let step = 0; step < totalSteps; step += beat) add(step, 'beat');
+    for (let step = Math.round(beat / 2); step < totalSteps; step += beat) {
       if (chance(rng, density * 0.4)) add(step, 'run');
     }
   }
 
   if (style === 'pump') {
-    const every = density > 0.45 ? 2 : STEPS_PER_BEAT;
+    const every = density > 0.45 ? Math.max(1, Math.round(beat / 2)) : beat;
     for (let step = 0; step < totalSteps; step += every) add(step, 'beat');
     for (let step = 1; every === 2 && step < totalSteps; step += 2) {
       if (chance(rng, (density - 0.45) * 0.6)) add(step, 'run');
@@ -235,7 +242,7 @@ function placeOnsets({ rng, style, density, motion, totalSteps, stepsPerChord, d
     for (let step = 0; step < totalSteps; step += 2) {
       if (tune.attack[step]) continue;
       const gap = tune.sounding[step] == null;
-      const onBeat = step % STEPS_PER_BEAT === 0;
+      const onBeat = step % beat === 0;
       if (chance(rng, (gap ? 0.55 : 0.14) * (onBeat ? 1.5 : 0.7) * (0.35 + density))) {
         add(step, gap ? 'answer' : 'beat');
       }
@@ -250,12 +257,12 @@ function placeOnsets({ rng, style, density, motion, totalSteps, stepsPerChord, d
   for (let step = 0; step < totalSteps; step++) {
     if (!at(drums.kick, step)) continue;
     // The off-beat kicks are the interesting ones; that is where the groove is.
-    if (chance(rng, appetite * (step % STEPS_PER_BEAT === 0 ? 0.75 : 1))) add(step, 'kick');
+    if (chance(rng, appetite * (step % beat === 0 ? 0.75 : 1))) add(step, 'kick');
   }
 
   // A kit with no kick in it — or no kit at all — still needs a floor under it.
   if (style === 'lock' && !drums.kick.some(Boolean)) {
-    for (let step = 0; step < totalSteps; step += STEPS_PER_BEAT) add(step, 'beat');
+    for (let step = 0; step < totalSteps; step += beat) add(step, 'beat');
   }
 
   // Answering the kit: a tom fill or a crash is the drummer announcing that
@@ -285,10 +292,10 @@ function placeOnsets({ rng, style, density, motion, totalSteps, stepsPerChord, d
 // --- pitch ------------------------------------------------------------------
 
 function voiceLine({
-  rng, marks, chords, stepsPerChord, totalSteps, scalePcs, range, home, style, motion, counter, drums, tune,
+  rng, marks, chords, stepsPerChord, totalSteps, beat, scalePcs, range, home, style, motion, counter, drums, tune,
 }) {
   const steps = [...marks.keys()].sort((a, b) => a - b);
-  const hold = HOLD[style] ?? STEPS_PER_BEAT;
+  const hold = holdFor(style, beat);
   const notes = [];
   let previous = null;
   let previousStep = 0;
@@ -315,7 +322,7 @@ function voiceLine({
       previousPc: previous == null ? null : ((previous % 12) + 12) % 12,
       // The last note of a chord gets to be an approach into the next root, so
       // long as it is close enough to the change to sound like one.
-      approaching: kind !== 'push' && until >= changeAt && changeAt - step <= STEPS_PER_BEAT,
+      approaching: kind !== 'push' && until >= changeAt && changeAt - step <= beat,
     });
 
     const midi = choosePitch({
@@ -337,7 +344,9 @@ function voiceLine({
       // An anticipation is held across the change it anticipates; everything
       // else runs to the next note, up to as long as the style likes to ring.
       length: Math.max(1, kind === 'push' ? until - step : Math.min(until - step, hold)),
-      velocity: velocityFor({ rng, kind, step, drums }),
+      velocity: velocityFor({
+        rng, kind, step, beat, stepsPerChord, drums,
+      }),
     });
 
     previous = midi;
@@ -469,8 +478,11 @@ function choosePitch({ rng, allowed, previous, range, home, counter, melody, wan
   return best ?? clamp(Math.round(home), low, high);
 }
 
-function velocityFor({ rng, kind, step, drums }) {
-  let level = step % 16 === 0 ? 110 : step % STEPS_PER_BEAT === 0 ? 100 : 88;
+function velocityFor({
+  rng, kind, step, beat, stepsPerChord, drums,
+}) {
+  // Hardest at the top of a chord, hard on the beat, softer in between.
+  let level = step % Math.max(1, stepsPerChord) === 0 ? 110 : step % beat === 0 ? 100 : 88;
   if (at(drums.kick, step)) level += 9; // landing with the kick, and hard
   if (at(drums.backbeat, step)) level += 3;
   if (kind === 'push') level += 5; // a lean nobody hears is not a lean

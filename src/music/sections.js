@@ -86,6 +86,9 @@ export function sectionSong(section) {
     // The bass is optional, and a section saved before it existed has none.
     bass: music.bassOn === false ? [] : (music.bass || []),
     rhythm: section?.rhythm?.pattern || null,
+    // The key it was written in, because an unequal temperament is measured
+    // from the tonic and every section keeps its own.
+    rootPc: music.rootPc ?? 0,
     // A section stores the *choice* of instrument, not the result, so one left
     // on "from the seed" re-derives its own voices from its own seeds — which
     // is why every section you roll turns up in a different colour.

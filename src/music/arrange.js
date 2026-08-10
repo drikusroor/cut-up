@@ -12,11 +12,14 @@
 export function naturalSteps(song) {
   const {
     chordVoicings = [], stepsPerChord = 16, melody = [], bass = [], rhythm = null,
+    stepsPerBar = 16,
   } = song || {};
   const chordSpan = chordVoicings.length * stepsPerChord;
   const drumSpan = rhythm?.tracks?.[0]?.pattern.length ?? 0;
   const end = (notes) => notes.reduce((max, note) => Math.max(max, note.step + note.length), 0);
-  return Math.max(chordSpan, drumSpan, end(melody), end(bass), 16);
+  // Nothing is ever shorter than one bar, whatever the time signature says a
+  // bar is.
+  return Math.max(chordSpan, drumSpan, end(melody), end(bass), stepsPerBar);
 }
 
 /**
@@ -27,6 +30,8 @@ export function naturalSteps(song) {
  * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.bass]
  * @param {{tracks: Array<{id:string, note:number, pattern:boolean[], velocities:number[]}>}} [song.rhythm]
  * @param {{lead?:string, harmony?:string, bass?:string, kit?:string}} [song.instruments]
+ * @param {number} [song.rootPc] the key, which is what an unequal temperament is measured from
+ * @param {number} [song.stepsPerBar] one bar, from the time signature
  * @param {number} [song.totalSteps] loop length; defaults to the longest part
  * @returns {{
  *   totalSteps: number,
@@ -46,8 +51,12 @@ export function arrange(song) {
     bass = [],
     rhythm = null,
     // Every event is tagged with the voice it should be played on, so a song
-    // strung together from sections can change instruments as it goes.
+    // strung together from sections can change instruments as it goes — and
+    // with the key it was written in, because an unequal temperament tunes the
+    // notes relative to the tonic and sections do not share one.
     instruments = {},
+    rootPc = 0,
+    stepsPerBar = 16,
   } = song || {};
 
   const chordSpan = chordVoicings.length * stepsPerChord;
@@ -56,7 +65,7 @@ export function arrange(song) {
   // The melody and the bass are written against the progression, so all three
   // repeat together even when the notes stop short of the last chord.
   const melodySpan = Math.max(chordSpan, end(melody), end(bass));
-  const totalSteps = song?.totalSteps || Math.max(chordSpan, drumSpan, melodySpan, 16);
+  const totalSteps = song?.totalSteps || Math.max(chordSpan, drumSpan, melodySpan, stepsPerBar);
 
   const chords = [];
   if (chordSpan > 0) {
@@ -67,6 +76,7 @@ export function arrange(song) {
         // A repeat that runs past the end of the loop gets clipped, not dropped.
         length: Math.min(stepsPerChord, totalSteps - step),
         instrument: instruments.harmony,
+        rootPc,
       });
     }
   }
@@ -78,7 +88,9 @@ export function arrange(song) {
       for (const note of notes) {
         const step = offset + note.step;
         if (step >= totalSteps) continue;
-        out.push({ ...note, step, length: Math.min(note.length, totalSteps - step), instrument });
+        out.push({
+          ...note, step, length: Math.min(note.length, totalSteps - step), instrument, rootPc,
+        });
       }
     }
     return out;

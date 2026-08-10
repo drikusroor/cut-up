@@ -13,6 +13,7 @@ import {
   sectionSteps,
 } from '../music/sections.js';
 import { chordSymbol, keyUsesFlats, noteName } from '../music/theory.js';
+import { meterInfo } from '../music/meter.js';
 import { melodyEditCount } from '../music/melody.js';
 import {
   bassInstrument,
@@ -52,8 +53,8 @@ export function initSong(ctx, panels) {
 
   const current = () => state.sections.find((s) => s.id === state.currentSectionId) || null;
 
-  /** Bars, rounded up — the unit people actually talk in. */
-  const bars = (steps) => Math.max(1, Math.round(steps / 16));
+  /** Bars, rounded — the unit people actually talk in, in the meter they set. */
+  const bars = (steps) => Math.max(1, Math.round(steps / meterInfo(state.meter).stepsPerBar));
 
   function summarise(section) {
     const music = section.music || {};

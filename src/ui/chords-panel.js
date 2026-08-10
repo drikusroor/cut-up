@@ -26,6 +26,7 @@ import {
   resolveLead,
 } from '../music/instruments.js';
 import { BASS_REGISTERS, BASS_STYLES, generateBass } from '../music/bass.js';
+import { meterInfo } from '../music/meter.js';
 import {
   applyMelodyEdits,
   EDIT_RANGE,
@@ -41,6 +42,8 @@ import {
 const PERCENT = (v) => `${Math.round(Number(v) * 100)}%`;
 /** Grabbing this close to a note's right-hand edge resizes it instead. */
 const RESIZE_GRIP = 9;
+/** How long a chord may be held, in bars. */
+const CHORD_LENGTHS = [0.5, 1, 2];
 
 export function initChords(ctx) {
   const { state, save, audio } = ctx;
@@ -55,6 +58,7 @@ export function initChords(ctx) {
     own: $('#own-chords'),
     length: $('#prog-length'),
     barsPerChord: $('#bars-per-chord'),
+    chordLengthHint: $('#chord-length-hint'),
     shape: $('#melody-shape'),
     rangeLow: $('#range-low'),
     rangeHigh: $('#range-high'),
@@ -140,6 +144,16 @@ export function initChords(ctx) {
     }, [t.label])),
   );
 
+  /** How the bar is counted right now — the transport owns the time signature. */
+  const grid = () => meterInfo(state.meter);
+
+  /** The nearest length the picker actually offers, for anything stored oddly. */
+  function nearestChordLength(bars) {
+    const value = Number(bars);
+    if (!Number.isFinite(value)) return 1;
+    return CHORD_LENGTHS.reduce((best, option) => (Math.abs(option - value) < Math.abs(best - value) ? option : best), 1);
+  }
+
   /** Writes the stored settings back into the controls. */
   function writeControls() {
     ui.root.value = String(m.rootPc);
@@ -147,7 +161,8 @@ export function initChords(ctx) {
     ui.mode.value = m.mode;
     ui.own.value = m.ownChords;
     ui.length.value = m.length;
-    ui.barsPerChord.value = String(m.stepsPerChord);
+    ui.barsPerChord.value = String(nearestChordLength(m.barsPerChord));
+    syncChordLength();
     ui.shape.value = m.melodyShape;
     ui.rangeLow.value = String(m.rangeLow);
     ui.rangeHigh.value = String(m.rangeHigh);
@@ -168,6 +183,12 @@ export function initChords(ctx) {
     for (const id of ['sevenths', 'spice', 'mel-density', 'chordTones', 'restiness', ...bassSliders.map(([x]) => x)]) {
       $(`#${id}`).dispatchEvent(new Event('input'));
     }
+  }
+
+  /** What a chord actually lasts, once the time signature has had its say. */
+  function syncChordLength() {
+    const info = grid();
+    ui.chordLengthHint.textContent = `${m.stepsPerChord} steps at ${info.label} — one bar is ${info.stepsPerBar}.`;
   }
 
   function syncMode() {
@@ -216,7 +237,9 @@ export function initChords(ctx) {
     m.mode = ui.mode.value;
     m.ownChords = ui.own.value;
     m.length = Number(ui.length.value);
-    m.stepsPerChord = Number(ui.barsPerChord.value);
+    // A chord is so many bars long; how many steps that is depends on the bar.
+    m.barsPerChord = nearestChordLength(ui.barsPerChord.value);
+    m.stepsPerChord = Math.max(1, Math.round(grid().stepsPerBar * m.barsPerChord));
     m.melodyShape = ui.shape.value;
     m.rangeLow = Number(ui.rangeLow.value);
     m.rangeHigh = Number(ui.rangeHigh.value);
@@ -231,7 +254,7 @@ export function initChords(ctx) {
     for (const [id, key] of [...melodySliders, ...bassSliders]) m[key] = Number($(`#${id}`).value);
   }
 
-  const totalSteps = () => Math.max(16, m.chords.length * m.stepsPerChord);
+  const totalSteps = () => Math.max(grid().stepsPerBar, m.chords.length * m.stepsPerChord);
 
   // --- generation -----------------------------------------------------------
 
@@ -267,6 +290,7 @@ export function initChords(ctx) {
     m.chords = fresh.map((chord, i) => m.locked[i] || chord);
     m.voicings = voiceProgression(m.chords, { octave: 3 });
     renderChords();
+    syncChordLength();
     // The melody keeps its own seed: new chords under the same melody idea is
     // a thing you want to be able to ask for.
     generateMelodyLine({ newSeed: false });
@@ -285,6 +309,7 @@ export function initChords(ctx) {
       rootPc: m.rootPc,
       scaleId: m.scaleId,
       stepsPerChord: m.stepsPerChord,
+      stepsPerBeat: grid().pulse,
       density: m.density,
       chordTones: m.chordTones,
       restiness: m.restiness,
@@ -322,6 +347,7 @@ export function initChords(ctx) {
       rootPc: m.rootPc,
       scaleId: m.scaleId,
       stepsPerChord: m.stepsPerChord,
+      stepsPerBeat: grid().pulse,
       style: m.bassStyle,
       density: m.bassDensity,
       motion: m.bassMotion,
@@ -348,7 +374,7 @@ export function initChords(ctx) {
     m.melodyBase = transformMelody(m.melodyBase, id, {
       rng: makeRng(`transform:${randomSeed()}`),
       totalSteps: totalSteps(),
-      stepsPerBar: m.stepsPerChord,
+      stepsPerBar: grid().stepsPerBar,
       range: [m.rangeLow, m.rangeHigh],
     });
     refreshMelody();
@@ -520,22 +546,23 @@ export function initChords(ctx) {
       }
     });
 
-    // Beat lines, then heavier bar lines over them.
+    // Beats, then bars over them, then the chord changes over those — three
+    // weights, so a bar of five reads as five and not as an accident.
+    const info = grid();
     g.lineWidth = 1;
-    g.strokeStyle = 'rgba(255,255,255,0.05)';
-    for (let step = 0; step <= steps; step += 4) {
-      g.beginPath();
-      g.moveTo(step * stepWidth + 0.5, 0);
-      g.lineTo(step * stepWidth + 0.5, height);
-      g.stroke();
-    }
-    g.strokeStyle = 'rgba(255,255,255,0.12)';
-    for (let step = 0; step <= steps; step += m.stepsPerChord) {
-      g.beginPath();
-      g.moveTo(step * stepWidth + 0.5, 0);
-      g.lineTo(step * stepWidth + 0.5, height);
-      g.stroke();
-    }
+    const rule = (every, colour) => {
+      if (!(every > 0)) return;
+      g.strokeStyle = colour;
+      for (let step = 0; step <= steps; step += every) {
+        g.beginPath();
+        g.moveTo(step * stepWidth + 0.5, 0);
+        g.lineTo(step * stepWidth + 0.5, height);
+        g.stroke();
+      }
+    };
+    rule(info.pulse, 'rgba(255,255,255,0.05)');
+    rule(info.stepsPerBar, 'rgba(255,255,255,0.12)');
+    rule(m.stepsPerChord, 'rgba(255,255,255,0.18)');
 
     // Ghosts: where the generator originally put the notes you have since moved
     // or struck out. This is the whole point of keeping edits as deviations —
@@ -816,8 +843,16 @@ export function initChords(ctx) {
     });
   });
 
-  for (const id of ['root', 'scale', 'prog-length', 'bars-per-chord', 'sevenths', 'spice']) {
+  for (const id of ['prog-length', 'bars-per-chord', 'sevenths', 'spice']) {
     $(`#${id}`).addEventListener('change', () => generateChords({ newSeed: false }));
+  }
+  for (const id of ['root', 'scale']) {
+    $(`#${id}`).addEventListener('change', () => {
+      generateChords({ newSeed: false });
+      // An unequal temperament is measured from the tonic, so a new key is a
+      // new set of offsets — and the transport says so.
+      ctx.onKeyChange?.();
+    });
   }
   for (const id of ['melody-shape', 'mel-density', 'chordTones', 'restiness', 'range-low', 'range-high']) {
     $(`#${id}`).addEventListener('change', () => generateMelodyLine({ newSeed: false }));
@@ -873,6 +908,26 @@ export function initChords(ctx) {
       }
     },
     redraw: renderRoll,
+    /**
+     * The bar changed length under it. The chords are unaffected — a
+     * progression is a list of chords, not of steps — but how long each one is
+     * held is not, so the melody and the bass are cut onto the new bar from the
+     * same seeds. Hand edits are deltas on notes that no longer exist, so they
+     * go the way they go on any reroll.
+     */
+    applyMeter() {
+      const before = m.stepsPerChord;
+      readControls();
+      syncChordLength();
+      if (m.stepsPerChord === before || !m.chords.length) {
+        renderRoll();
+        save();
+        return;
+      }
+      const edits = melodyEditCount(m.melodyEdits);
+      generateMelodyLine({ newSeed: false });
+      if (edits) toast(`Recounted in ${grid().label} — the melody was rewritten to the new bar`);
+    },
     /** New melody over the same chords — what forking a variation does. */
     rerollMelody: () => generateMelodyLine({ newSeed: true }),
     /**
