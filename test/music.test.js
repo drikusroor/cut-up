@@ -46,7 +46,15 @@ import {
   MELODY_SHAPES,
   transformMelody,
 } from '../src/music/melody.js';
-import { arrange } from '../src/music/arrange.js';
+import { arrange, normalizeFade, tempoScaleOf } from '../src/music/arrange.js';
+import {
+  composeSong,
+  defaultComposeSettings,
+  FORMS,
+  formsFor,
+  normalizeComposeSettings,
+} from '../src/music/compose.js';
+import { makeClock } from '../src/music/audio.js';
 import {
   buildSongPlan,
   forkSection,
@@ -1465,4 +1473,274 @@ test('a tambourine in six-eight lands on an eighth, not between two', () => {
   // 6/8: the third eighth of each dotted beat. A tambourine on step 3 would be
   // playing a sixteenth nobody is counting.
   assert.deepEqual(offbeats({ beats: 6, unit: 8 }), [4, 10]);
+});
+
+// --- the composer -----------------------------------------------------------
+
+/** A song, composed off a fixed seed so a failure is reproducible. */
+function composed(settings = {}, options = {}) {
+  return composeSong({
+    settings: { seed: 'test', ...settings },
+    rootPc: 9,
+    scaleId: 'minor',
+    meter: { beats: 4, unit: 4 },
+    tempo: 96,
+    ...options,
+  });
+}
+
+test('a composed song is an ordinary drawer of sections and a running order', () => {
+  const song = composed();
+  assert.ok(song.sections.length >= 3, 'a song is more than a loop');
+  assert.ok(song.arrangement.length >= song.sections.length);
+
+  const ids = new Set(song.sections.map((section) => section.id));
+  for (const item of song.arrangement) {
+    assert.ok(ids.has(item.sectionId), 'every entry points at a section that exists');
+  }
+  const used = new Set(song.arrangement.map((item) => item.sectionId));
+  for (const section of song.sections) {
+    assert.ok(used.has(section.id), `${section.name} is on the shelf but never played`);
+  }
+  // And it is playable: the plan agrees with the length the composer aimed for.
+  const plan = buildSongPlan(song.sections, song.arrangement);
+  assert.equal(plan.totalSteps, song.steps);
+});
+
+test('the same seed writes the same song back', () => {
+  const a = composed({ seed: 'again' });
+  const b = composed({ seed: 'again' });
+  const shape = (song) => song.arrangement.map((item, index) => [
+    song.sections[index]?.name, item.repeats,
+  ]);
+  assert.deepEqual(shape(a), shape(b));
+  assert.deepEqual(
+    a.sections.map((s) => s.music.chords.map((c) => c.roman)),
+    b.sections.map((s) => s.music.chords.map((c) => c.roman)),
+  );
+  assert.notDeepEqual(
+    composed({ seed: 'other' }).sections.map((s) => s.name + s.music.chordSeed),
+    a.sections.map((s) => s.name + s.music.chordSeed),
+  );
+});
+
+test('a song comes out about as long as it was asked to be', () => {
+  for (const minutes of [1, 2.5, 4]) {
+    for (const seed of ['a', 'b', 'c', 'd']) {
+      const song = composed({ seed, minutes });
+      const ratio = song.seconds / (minutes * 60);
+      assert.ok(
+        ratio > 0.8 && ratio < 1.25,
+        `${minutes}min asked for, ${(song.seconds / 60).toFixed(2)} written (seed ${seed})`,
+      );
+    }
+  }
+});
+
+test('every letter after the first is pulled away from the home section', () => {
+  for (const seed of ['one', 'two', 'three', 'four', 'five']) {
+    const song = composed({ seed, letters: 3 });
+    const [home, ...rest] = song.sections.filter((s) => s.kind !== 'intro' && s.kind !== 'outro');
+    const bodies = rest.filter((section) => !/[′″‴]/.test(section.name));
+    assert.ok(bodies.length, 'a three-letter song has more than one idea in it');
+    for (const section of bodies) {
+      const moved = section.music.rootPc !== home.music.rootPc
+        || section.music.scaleId !== home.music.scaleId
+        || section.music.harmonyInstrument !== home.music.harmonyInstrument
+        || section.music.leadInstrument !== home.music.leadInstrument
+        || (section.dynamics ?? 1) !== (home.dynamics ?? 1)
+        || (section.tempoScale ?? 1) !== (home.tempoScale ?? 1)
+        || section.meter.beats !== home.meter.beats
+        || section.rhythm.trackIds.join() !== home.rhythm.trackIds.join()
+        || section.music.length !== home.music.length;
+      assert.ok(moved, `${section.name} is the same as ${home.name} in every way that can be heard`);
+      assert.ok(section.traits.length > 1, `${section.name} cannot say what makes it different`);
+    }
+  }
+});
+
+test('a middle eight goes somewhere the verse does not', () => {
+  // Whatever else it does, the section that turns up once has to change the
+  // ground under it or the colour on top of it — that is what a bridge is.
+  for (const seed of ['m1', 'm2', 'm3', 'm4']) {
+    const song = composed({ seed, letters: 3, form: 'ababcb' });
+    const bridge = song.sections.find((section) => section.kind === 'bridge');
+    assert.ok(bridge, 'ABABCB has a middle eight in it');
+    const home = song.sections.find((section) => section.name === 'A');
+    assert.ok(
+      bridge.music.rootPc !== home.music.rootPc
+        || bridge.music.scaleId !== home.music.scaleId
+        || bridge.meter.beats !== home.meter.beats
+        || bridge.music.harmonyInstrument !== home.music.harmonyInstrument,
+      'the middle eight is only decorated differently',
+    );
+  }
+});
+
+test('the bookends are the bookends, and can be turned off', () => {
+  const song = composed({ seed: 'ends', intro: true, outro: true });
+  const kinds = song.arrangement.map(
+    (item) => song.sections.find((section) => section.id === item.sectionId).kind,
+  );
+  assert.equal(kinds[0], 'intro');
+  assert.equal(kinds.at(-1), 'outro');
+  assert.equal(kinds.filter((kind) => kind === 'intro' || kind === 'outro').length, 2);
+
+  const bare = composed({ seed: 'ends', intro: false, outro: false });
+  assert.ok(!bare.sections.some((section) => section.kind === 'intro' || section.kind === 'outro'));
+});
+
+test('a repeat that comes back changed is a section of its own', () => {
+  // A′ is A: the same chords, in the same order, played differently.
+  const song = composed({ seed: 'vary', variation: 1, letters: 2 });
+  const variant = song.sections.find((section) => /[′″‴]/.test(section.name));
+  assert.ok(variant, 'nothing came back changed at full variation');
+  const source = song.sections.find((section) => section.name === variant.name[0]);
+  assert.equal(variant.music.chordSeed, source.music.chordSeed, 'a variant keeps its progression');
+  assert.deepEqual(
+    variant.music.chords.map((chord) => chord.roman),
+    source.music.chords.map((chord) => chord.roman),
+    'a variant is the same progression, however it is played or transposed',
+  );
+  assert.ok(variant.traits.some((trait) => trait.startsWith(source.name)));
+
+  const straight = composed({ seed: 'vary', variation: 0, letters: 2 });
+  assert.ok(!straight.sections.some((section) => /[′″‴]/.test(section.name)));
+});
+
+test('what the composer is told not to do, it does not do', () => {
+  for (const seed of ['n1', 'n2', 'n3', 'n4', 'n5']) {
+    const song = composed({
+      seed, letters: 4, modulate: false, meterShifts: false, tempoShifts: false, pickTempo: false,
+    });
+    assert.equal(song.tempo, 96, 'the transport tempo was kept');
+    for (const section of song.sections) {
+      assert.equal(section.music.rootPc, 9, `${section.name} changed key`);
+      assert.deepEqual(section.meter, { beats: 4, unit: 4 }, `${section.name} changed the bar`);
+      assert.equal(section.tempoScale ?? 1, 1, `${section.name} changed tempo`);
+    }
+  }
+});
+
+test('the shapes are all playable, and each needs exactly its own letters', () => {
+  for (const form of FORMS) {
+    assert.ok(form.shape.length >= 2, `${form.id} is not a shape`);
+    assert.equal(new Set(form.shape).size, form.letters, `${form.id} miscounts its letters`);
+    assert.equal(form.shape[0], 0, `${form.id} does not start at home`);
+    const song = composed({ form: form.id, seed: form.id });
+    assert.ok(song.sections.length >= form.letters);
+    assert.equal(song.form.id, form.id);
+  }
+  assert.deepEqual(formsFor(2).map((f) => f.letters), formsFor(2).map(() => 2));
+});
+
+test('compose settings are clamped rather than trusted', () => {
+  const settings = normalizeComposeSettings({
+    letters: 99, minutes: 500, contrast: -3, variation: 'lots', intro: 'yes',
+  });
+  assert.equal(settings.letters, 6);
+  assert.equal(settings.minutes, 12);
+  assert.equal(settings.contrast, 0);
+  assert.equal(settings.variation, defaultComposeSettings().variation);
+  assert.equal(settings.intro, true, 'a non-boolean falls back to the default');
+});
+
+// --- how a section is played ------------------------------------------------
+
+test('a section played softer comes out softer, note for note', () => {
+  const loud = testSection('A', 'Am F', { melody: [{ midi: 72, step: 0, length: 4, velocity: 100 }] });
+  const soft = { ...testSection('B', 'Am F', { melody: [{ midi: 72, step: 0, length: 4, velocity: 100 }] }), dynamics: 0.5 };
+  const plan = buildSongPlan([loud, soft], [{ sectionId: loud.id }, { sectionId: soft.id }]);
+  const laid = arrange({ sections: plan.blocks.map((block) => block.song) });
+  assert.equal(laid.melody[0].velocity, 100);
+  assert.equal(laid.melody.at(-1).velocity, 50);
+  // Chords are struck at a velocity too, or the harmony would not follow.
+  assert.ok(laid.chords.at(-1).velocity < laid.chords[0].velocity);
+});
+
+test('a fade holds, then goes, and takes every part with it', () => {
+  const a = testSection('A', 'Am F C G', {
+    melody: Array.from({ length: 8 }, (_, i) => ({ midi: 72, step: i * 8, length: 4, velocity: 100 })),
+  });
+  const plan = buildSongPlan([a], [{ sectionId: a.id, repeats: 2, fade: true }]);
+  const laid = arrange({ sections: plan.blocks.map((block) => block.song) });
+  const velocities = laid.melody.map((note) => note.velocity);
+  assert.equal(velocities[0], 100, 'a fade does not start at step one');
+  assert.ok(velocities.at(-1) < 10, 'it is nearly gone by the end');
+  for (let i = 1; i < velocities.length; i++) {
+    assert.ok(velocities[i] <= velocities[i - 1], 'a fade never gets louder');
+  }
+  assert.deepEqual(normalizeFade(false), null);
+  assert.equal(normalizeFade(true).to, 0);
+});
+
+test('a section taken at another tempo says so, in steps', () => {
+  const a = testSection('A', 'Am F');
+  const coda = { ...testSection('Coda', 'Am F', { kind: 'outro' }), tempoScale: 0.5 };
+  const plan = buildSongPlan([a, coda], [{ sectionId: a.id }, { sectionId: coda.id }]);
+  const laid = arrange({ sections: plan.blocks.map((block) => block.song), meter: { beats: 4, unit: 4 } });
+  assert.deepEqual(laid.tempoMap, [{ step: 0, scale: 1 }, { step: 32, scale: 0.5 }]);
+  assert.equal(tempoScaleOf('nonsense'), 1);
+  assert.equal(tempoScaleOf(0), 1);
+});
+
+test('a section counted in another bar says so too', () => {
+  const a = testSection('A', 'Am F');
+  const b = { ...testSection('B', 'Am F'), meter: { beats: 3, unit: 4 } };
+  const plan = buildSongPlan([a, b], [{ sectionId: a.id }, { sectionId: b.id }]);
+  const laid = arrange({ sections: plan.blocks.map((block) => block.song), meter: { beats: 4, unit: 4 } });
+  assert.deepEqual(laid.meterMap, [
+    { step: 0, meter: { beats: 4, unit: 4 } },
+    { step: 32, meter: { beats: 3, unit: 4 } },
+  ]);
+});
+
+test('the clock turns a tempo map into seconds, and back into steps', () => {
+  // Sixteen steps at one tempo, then sixteen at half speed.
+  const clock = makeClock([{ step: 0, scale: 1 }, { step: 16, scale: 0.5 }], 0.1, 32);
+  assert.equal(clock.timeAt(0), 0);
+  assert.equal(clock.timeAt(16), 1.6);
+  assert.ok(Math.abs(clock.timeAt(32) - 4.8) < 1e-9, 'the second half takes twice as long');
+  assert.equal(clock.stepSeconds(20), 0.2);
+  assert.ok(Math.abs(clock.stepAt(1.6) - 16) < 1e-9);
+  assert.ok(Math.abs(clock.stepAt(4.8) - 32) < 1e-9);
+  // A song with one tempo is the old multiplication, exactly.
+  const plain = makeClock([], 0.125, 64);
+  assert.equal(plain.timeAt(8), 1);
+  assert.equal(plain.total, 8);
+});
+
+test('a tempo change and a bar change are written into the exported file', () => {
+  const a = testSection('A', 'Am F');
+  const coda = { ...testSection('Coda', 'Am F', { kind: 'outro' }), tempoScale: 0.5, meter: { beats: 3, unit: 4 } };
+  const plan = buildSongPlan([a, coda], [{ sectionId: a.id }, { sectionId: coda.id }]);
+  const bytes = songToMidi({
+    sections: plan.blocks.map((block) => block.song), tempo: 120, meter: { beats: 4, unit: 4 },
+  });
+  // Two tempo meta events (FF 51) and two time signatures (FF 58) on track 0.
+  let tempos = 0;
+  let meters = 0;
+  for (let i = 0; i < bytes.length - 2; i++) {
+    if (bytes[i] === 0xff && bytes[i + 1] === 0x51) tempos += 1;
+    if (bytes[i] === 0xff && bytes[i + 1] === 0x58) meters += 1;
+  }
+  assert.equal(tempos, 2, 'the coda drops to half tempo in the file too');
+  assert.equal(meters, 2, 'and is counted in three');
+});
+
+test('a section remembers the bar it was written in', () => {
+  const section = makeSection({
+    name: 'A',
+    music: { chords: [], voicings: [[57, 60, 64]], stepsPerChord: 12 },
+    rhythm: {},
+    meter: { beats: 3, unit: 4 },
+    dynamics: 0.8,
+    tempoScale: 1,
+    traits: ['A natural minor'],
+  });
+  assert.deepEqual(section.meter, { beats: 3, unit: 4 });
+  assert.equal(section.dynamics, 0.8);
+  assert.ok(!('tempoScale' in section), 'a section at the transport tempo says nothing about it');
+  assert.deepEqual(sectionSong(section).meter, { beats: 3, unit: 4 });
+  assert.equal(sectionSong(section).dynamics, 0.8);
 });

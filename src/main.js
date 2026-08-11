@@ -8,9 +8,10 @@ import { initSong } from './ui/song-panel.js';
 import { initFeel } from './ui/feel-panel.js';
 import { AudioEngine } from './music/audio.js';
 import { songToMidi } from './music/midi.js';
-import { buildSongPlan } from './music/sections.js';
+import { buildSongPlan, clockTime, planSeconds } from './music/sections.js';
 import { emptyMelodyEdits } from './music/melody.js';
 import { AUTO, resolveInstruments } from './music/instruments.js';
+import { defaultComposeSettings, normalizeComposeSettings } from './music/compose.js';
 import { DEFAULT_METER, meterInfo, normalizeMeter } from './music/meter.js';
 import { defaultHumanize, normalizeHumanize } from './music/humanize.js';
 import { defaultTuning, normalizeTuning } from './music/tuning.js';
@@ -108,8 +109,10 @@ function defaultState() {
     },
     // Saved ideas, and the running order built out of them.
     sections: [],
-    arrangement: [], // [{ sectionId, repeats }]
+    arrangement: [], // [{ sectionId, repeats, fade }]
     currentSectionId: null,
+    // What the composer was last asked for — see music/compose.js.
+    compose: defaultComposeSettings(),
   };
 }
 
@@ -130,6 +133,7 @@ function loadState() {
       tuning: normalizeTuning(stored.tuning || base.tuning),
       sections: Array.isArray(stored.sections) ? stored.sections : [],
       arrangement: Array.isArray(stored.arrangement) ? stored.arrangement : [],
+      compose: normalizeComposeSettings(stored.compose || base.compose),
     };
     // A progression saved before time signatures existed knows how long its
     // chords are in steps but not in bars, which is now the thing you set.
@@ -362,11 +366,23 @@ function renderPlayScope() {
     return;
   }
   const plan = buildSongPlan(state.sections, state.arrangement);
-  const bar = meterInfo(state.meter).stepsPerBar;
   scope.textContent = plan.blocks.length
-    ? `Playing the song — ${Math.max(1, Math.round(plan.totalSteps / bar))} bars`
+    ? `Playing the song — ${plan.blocks.length} parts, ${clockTime(planSeconds(plan, state.tempo))}`
     : 'No arrangement yet — looping what you have open';
 }
+
+/**
+ * The transport was changed from somewhere else — the composer picking a tempo,
+ * or a section bringing its own time signature back with it. Nothing is
+ * regenerated: the controls are simply told what they now say.
+ */
+ctx.onTransportChange = () => {
+  tempoInput.value = String(state.tempo);
+  feelPanel.applyState();
+  renderPlayScope();
+  save();
+  ctx.refreshPlayback?.();
+};
 
 /** For changes that alter the sound without altering a note. */
 ctx.refreshPlayback = () => {

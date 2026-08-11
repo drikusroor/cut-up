@@ -52,39 +52,54 @@ function chunk(id, data) {
  * the piano's survives the trip into a DAW: the note is written on the nearest
  * key and bent onto its real pitch just before it sounds.
  *
- * @param {{name?: string, channel?: number, tempo?: number, meter?: {beats:number, unit:number}, notes: Array<{midi:number, tick:number, durationTicks:number, velocity?:number, program?:number, bend?:number}>}} track
+ * A track may also carry a tempo or a time-signature *map* rather than a single
+ * value, which is how a song whose coda drops into half time, or whose middle
+ * eight is counted in three, comes out of here with the bar lines a DAW draws
+ * in the right places.
+ *
+ * @param {{name?: string, channel?: number, tempo?: number, meter?: {beats:number, unit:number}, tempoMap?: Array<{tick:number, tempo:number}>, meterMap?: Array<{tick:number, meter:object}>, notes: Array<{midi:number, tick:number, durationTicks:number, velocity?:number, program?:number, bend?:number}>}} track
  */
 function trackChunk(track) {
   const {
-    name, channel = 0, tempo, meter, notes = [],
+    name, channel = 0, tempo, meter, tempoMap = [], meterMap = [], notes = [],
   } = track;
   const events = [];
 
   if (name) {
     events.push({ tick: 0, order: 0, bytes: [0xff, 0x03, name.length, ...str(name)] });
   }
-  if (tempo) {
-    const usPerQuarter = Math.round(60000000 / tempo);
-    events.push({
-      tick: 0,
-      order: 0,
-      bytes: [0xff, 0x51, 0x03, (usPerQuarter >> 16) & 0xff, (usPerQuarter >> 8) & 0xff, usPerQuarter & 0xff],
-    });
+
+  const tempoBytes = (bpm) => {
+    const usPerQuarter = Math.round(60000000 / bpm);
+    return [0xff, 0x51, 0x03, (usPerQuarter >> 16) & 0xff, (usPerQuarter >> 8) & 0xff, usPerQuarter & 0xff];
+  };
+  const meterBytes = (signature) => {
+    const { beats, unit } = normalizeMeter(signature);
+    return [
+      0xff, 0x58, 0x04,
+      beats,
+      Math.round(Math.log2(unit)),
+      // Clocks per metronome click: one click per written beat.
+      Math.max(1, Math.round((24 * 4) / unit)),
+      8, // thirty-seconds per quarter, which is always eight
+    ];
+  };
+
+  // The map wins where it has an opinion; the single value fills in the top of
+  // the file when it does not, so a song that never changes tempo is written
+  // exactly as it always was.
+  const tempos = [...tempoMap].sort((a, b) => a.tick - b.tick);
+  if (tempo && !tempos.some((entry) => entry.tick <= 0)) tempos.unshift({ tick: 0, tempo });
+  for (const entry of tempos) {
+    if (!(entry.tempo > 0)) continue;
+    events.push({ tick: Math.max(0, Math.round(entry.tick)), order: 0, bytes: tempoBytes(entry.tempo) });
   }
-  if (meter) {
-    const { beats, unit } = normalizeMeter(meter);
-    events.push({
-      tick: 0,
-      order: 0,
-      bytes: [
-        0xff, 0x58, 0x04,
-        beats,
-        Math.round(Math.log2(unit)),
-        // Clocks per metronome click: one click per written beat.
-        Math.max(1, Math.round((24 * 4) / unit)),
-        8, // thirty-seconds per quarter, which is always eight
-      ],
-    });
+
+  const meters = [...meterMap].sort((a, b) => a.tick - b.tick);
+  if (meter && !meters.some((entry) => entry.tick <= 0)) meters.unshift({ tick: 0, meter });
+  for (const entry of meters) {
+    if (!entry.meter) continue;
+    events.push({ tick: Math.max(0, Math.round(entry.tick)), order: 0, bytes: meterBytes(entry.meter) });
   }
   if (notes.some((note) => note.bend)) {
     // RPN 0: set the pitch bend range to the two semitones the offsets assume.
@@ -130,16 +145,18 @@ function trackChunk(track) {
 
 /**
  * Builds a complete MIDI file.
- * @param {{tempo?: number, meter?: {beats:number, unit:number}, tracks: Array<{name?: string, channel?: number, notes: any[]}>}} song
+ * @param {{tempo?: number, meter?: {beats:number, unit:number}, tempoMap?: Array<{tick:number, tempo:number}>, meterMap?: Array<{tick:number, meter:object}>, tracks: Array<{name?: string, channel?: number, notes: any[]}>}} song
  * @returns {Uint8Array}
  */
 export function buildMidiFile(song) {
-  const { tempo = 100, meter = DEFAULT_METER, tracks = [] } = song;
+  const {
+    tempo = 100, meter = DEFAULT_METER, tempoMap = [], meterMap = [], tracks = [],
+  } = song;
   const chunks = [];
   // Track 0 carries the tempo map and the time signature, which is the type-1
   // convention — a DAW reads its bar lines off this one track.
   chunks.push(trackChunk({
-    name: 'Tempo', tempo, meter, notes: [],
+    name: 'Tempo', tempo, meter, tempoMap, meterMap, notes: [],
   }));
   for (const track of tracks) chunks.push(trackChunk(track));
 
@@ -189,7 +206,7 @@ export function songToMidi(song) {
   } = song;
   // Same layout the audio engine plays, so the export is what you just heard.
   const {
-    chords, melody, bass, drums,
+    chords, melody, bass, drums, tempoMap = [], meterMap = [],
   } = arrange(song);
 
   /** The nudge the humanizer gave this event, in steps. */
@@ -217,7 +234,7 @@ export function songToMidi(song) {
           // Chords are not swung in playback either — see audio.js.
           tick: stepToTicks(chord.step, 0, drift('chords', chord.step)),
           durationTicks: Math.max(1, chord.length * TICKS_PER_STEP - 10),
-          velocity: 80,
+          velocity: chord.velocity ?? 80,
           program,
         });
       }
@@ -269,7 +286,20 @@ export function songToMidi(song) {
     });
   }
 
-  return buildMidiFile({ tempo, meter, tracks });
+  return buildMidiFile({
+    tempo,
+    meter,
+    // Where the song leans on the transport: a section taken faster or slower
+    // than the tempo, or counted in a different bar, writes a meta event at the
+    // step it starts on.
+    tempoMap: tempoMap
+      .filter((entry) => entry.step > 0 || entry.scale !== 1)
+      .map((entry) => ({ tick: stepToTicks(entry.step), tempo: tempo * entry.scale })),
+    meterMap: meterMap
+      .filter((entry) => entry.meter)
+      .map((entry) => ({ tick: stepToTicks(entry.step), meter: entry.meter })),
+    tracks,
+  });
 }
 
 function clamp(value, min, max) {

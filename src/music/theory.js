@@ -58,6 +58,14 @@ export function noteName(pc, useFlats = false) {
   return names[((pc % 12) + 12) % 12];
 }
 
+/** "A harmonic minor" — the way a key is said rather than the way it is keyed. */
+export function keyLabel(rootPc, scaleId) {
+  const scale = getScale(scaleId);
+  // "Major (Ionian)" is a picker label; in a sentence it is just "major".
+  const name = scale.label.replace(/ \(.*\)$/, '').toLowerCase();
+  return `${noteName(rootPc, keyUsesFlats(rootPc, scaleId))} ${name}`;
+}
+
 export function keyUsesFlats(rootPc, scaleId) {
   const minorish = ['minor', 'dorian', 'phrygian', 'harmonicMinor', 'melodicMinor', 'minorPentatonic'];
   return FLAT_KEYS.has(((rootPc % 12) + 12) % 12) || (minorish.includes(scaleId) && FLAT_KEYS.has((rootPc + 3) % 12));

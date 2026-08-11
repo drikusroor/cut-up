@@ -8,6 +8,7 @@
 
 import { naturalSteps } from './arrange.js';
 import { resolveInstruments } from './instruments.js';
+import { stepsPerBar } from './meter.js';
 
 export const SECTION_KINDS = [
   { id: 'intro', label: 'Intro', hint: 'Sets it up. Optional.' },
@@ -53,10 +54,21 @@ function newId(prefix) {
 
 /**
  * Takes a snapshot of the current music and rhythm state.
- * @param {{name: string, kind?: string, music: object, rhythm: object}} spec
+ *
+ * A section remembers the bar it was written in, because the time signature is
+ * global but a saved idea is not: a chorus counted in 7/8 is still in 7/8 when
+ * the transport has moved on. It can also carry how hard it is played
+ * (`dynamics`), how fast relative to the tempo (`tempoScale`), and a line or
+ * two saying what makes it different from the others (`traits`) — which is how
+ * a composed song explains itself on the shelf.
+ *
+ * @param {{name: string, kind?: string, music: object, rhythm: object,
+ *   meter?: object, dynamics?: number, tempoScale?: number, traits?: string[]}} spec
  */
-export function makeSection({ name, kind = 'main', music, rhythm }) {
-  return {
+export function makeSection({
+  name, kind = 'main', music, rhythm, meter, dynamics, tempoScale, traits,
+}) {
+  const section = {
     id: newId('sec'),
     name,
     kind,
@@ -64,6 +76,11 @@ export function makeSection({ name, kind = 'main', music, rhythm }) {
     rhythm: clone(rhythm),
     savedAt: Date.now(),
   };
+  if (meter) section.meter = clone(meter);
+  if (Number.isFinite(dynamics) && dynamics !== 1) section.dynamics = dynamics;
+  if (Number.isFinite(tempoScale) && tempoScale !== 1) section.tempoScale = tempoScale;
+  if (traits?.length) section.traits = clone(traits);
+  return section;
 }
 
 /** A copy under a new id and name — the "fork this and take it elsewhere" move. */
@@ -93,6 +110,12 @@ export function sectionSong(section) {
     // on "from the seed" re-derives its own voices from its own seeds — which
     // is why every section you roll turns up in a different colour.
     instruments: resolveInstruments(music, section?.rhythm),
+    // The bar it was counted in, how loud it is played and how fast, all of
+    // which the arranger applies as it lays the section down.
+    meter: section?.meter || null,
+    stepsPerBar: section?.meter ? stepsPerBar(section.meter) : 16,
+    dynamics: section?.dynamics ?? 1,
+    tempoScale: section?.tempoScale ?? 1,
   };
 }
 
@@ -106,8 +129,13 @@ export function sectionSteps(section) {
  * their start positions — which is what both the transport and the playhead
  * highlight need to know.
  *
+ * An entry may also ask for the block to fade, which is a property of *this
+ * appearance* of the section rather than of the section itself: a chorus that
+ * fades out at the end of the song is the same chorus that came in at full
+ * volume four minutes earlier.
+ *
  * @param {object[]} sections the library
- * @param {Array<{sectionId: string, repeats?: number}>} arrangement
+ * @param {Array<{sectionId: string, repeats?: number, fade?: boolean|object}>} arrangement
  */
 export function buildSongPlan(sections = [], arrangement = []) {
   const byId = new Map(sections.map((s) => [s.id, s]));
@@ -128,12 +156,38 @@ export function buildSongPlan(sections = [], arrangement = []) {
       steps,
       start: step,
       length: steps * repeats,
+      fade: item.fade || null,
+      meter: section.meter || null,
       // Pinning totalSteps keeps a block the same length even when a part is
       // muted, so muting the melody never shortens the section under it.
-      song: { ...sectionSong(section), totalSteps: steps, repeats },
+      song: {
+        ...sectionSong(section), totalSteps: steps, repeats, fade: item.fade || null,
+      },
     });
     step += steps * repeats;
   }
 
   return { blocks, totalSteps: step };
+}
+
+/**
+ * How long a plan lasts, in seconds. Not simply steps × tempo: a section can be
+ * taken faster or slower than the transport, and a song with a half-time coda
+ * runs longer than its step count says.
+ *
+ * @param {{blocks: Array<{length:number, song:{tempoScale?:number}}>}} plan
+ * @param {number} tempo
+ */
+export function planSeconds(plan, tempo) {
+  const secondsPerStep = 60 / Math.max(20, tempo || 100) / 4;
+  return (plan?.blocks || []).reduce(
+    (total, block) => total + (block.length * secondsPerStep) / (block.song?.tempoScale || 1),
+    0,
+  );
+}
+
+/** "2:47" — the way a running time is written on a sleeve. */
+export function clockTime(seconds) {
+  const whole = Math.max(0, Math.round(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
