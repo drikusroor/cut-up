@@ -1,19 +1,31 @@
 // The Song tab: a drawer of saved sections, and the running order you build
 // out of them.
 
-import { $, el, fillSelect, toast } from './dom.js';
+import {
+  $, bindSlider, el, fillSelect, toast,
+} from './dom.js';
 import {
   buildSongPlan,
   clone,
   forkSection,
   kindLabel,
+  clockTime,
   makeSection,
   nextSectionName,
+  planSeconds,
   SECTION_KINDS,
   sectionSteps,
 } from '../music/sections.js';
-import { chordSymbol, keyUsesFlats, noteName } from '../music/theory.js';
-import { meterInfo } from '../music/meter.js';
+import {
+  composeSong,
+  FORMS,
+  formsFor,
+  LETTER_RANGE,
+  normalizeComposeSettings,
+} from '../music/compose.js';
+import { randomSeed } from '../rng.js';
+import { chordSymbol, keyLabel, keyUsesFlats } from '../music/theory.js';
+import { meterInfo, meterLabel } from '../music/meter.js';
 import { melodyEditCount } from '../music/melody.js';
 import {
   bassInstrument,
@@ -47,6 +59,24 @@ export function initSong(ctx, panels) {
     sections: $('#sections-out'),
     arrangement: $('#arrangement-out'),
     summary: $('#song-summary'),
+    compose: $('#compose-song'),
+    letters: $('#compose-letters'),
+    minutes: $('#compose-minutes'),
+    form: $('#compose-form'),
+    formHint: $('#compose-form-hint'),
+    contrast: $('#compose-contrast'),
+    variation: $('#compose-variation'),
+    intro: $('#compose-intro'),
+    outro: $('#compose-outro'),
+    fade: $('#compose-fade'),
+    modulate: $('#compose-modulate'),
+    meterShifts: $('#compose-meter'),
+    tempoShifts: $('#compose-tempo-shifts'),
+    pickTempo: $('#compose-pick-tempo'),
+    composeSeed: $('#compose-seed'),
+    newComposeSeed: $('#new-compose-seed'),
+    replace: $('#compose-replace'),
+    composeSummary: $('#compose-summary'),
   };
 
   fillSelect(ui.kind, SECTION_KINDS.map((k) => ({ value: k.id, label: k.label })), 'main');
@@ -54,16 +84,21 @@ export function initSong(ctx, panels) {
   const current = () => state.sections.find((s) => s.id === state.currentSectionId) || null;
 
   /** Bars, rounded — the unit people actually talk in, in the meter they set. */
-  const bars = (steps) => Math.max(1, Math.round(steps / meterInfo(state.meter).stepsPerBar));
+  const bars = (steps, meter) => Math.max(1, Math.round(steps / meterInfo(meter || state.meter).stepsPerBar));
+
+  /** How long the arrangement lasts, sections taken at their own tempo. */
+  const songSeconds = (plan) => planSeconds(plan, state.tempo);
 
   function summarise(section) {
     const music = section.music || {};
     const flats = keyUsesFlats(music.rootPc ?? 0, music.scaleId);
     const sound = resolveInstruments(music, section.rhythm);
     return {
-      key: `${noteName(music.rootPc ?? 0, flats)} ${music.scaleId || ''}`.trim(),
+      key: keyLabel(music.rootPc ?? 0, music.scaleId),
       chords: (music.chords || []).map((c) => chordSymbol(c, flats)).join(' '),
-      bars: bars(sectionSteps(section)),
+      bars: bars(sectionSteps(section), section.meter),
+      // Only worth saying when the section brought its own bar with it.
+      meter: section.meter ? ` of ${meterLabel(section.meter)}` : '',
       notes: (music.melody || []).length,
       edits: melodyEditCount(music.melodyEdits),
       bass: music.bassOn === false ? 0 : (music.bass || []).length,
@@ -80,7 +115,11 @@ export function initSong(ctx, panels) {
   // --- saving and loading ---------------------------------------------------
 
   function snapshot(name, kind) {
-    return makeSection({ name, kind, music: state.music, rhythm: state.rhythm });
+    // The time signature is global, but a saved idea is not: a section written
+    // in 7/8 is still in 7/8 after the transport has moved on.
+    return makeSection({
+      name, kind, music: state.music, rhythm: state.rhythm, meter: state.meter,
+    });
   }
 
   function saveSection({ kind = ui.kind.value, name = ui.name.value.trim() } = {}) {
@@ -107,6 +146,8 @@ export function initSong(ctx, panels) {
       kind: ui.kind.value,
       music: clone(state.music),
       rhythm: clone(state.rhythm),
+      // Whatever bar it is being counted in now is the bar it was written in.
+      meter: { ...state.meter },
       savedAt: Date.now(),
     });
     render();
@@ -120,11 +161,23 @@ export function initSong(ctx, panels) {
     Object.assign(state.music, clone(section.music));
     Object.assign(state.rhythm, clone(section.rhythm));
     state.currentSectionId = section.id;
+    // A section counted in another bar brings its bar with it, or the panels
+    // would draw its parts on a grid they were never written for. The parts
+    // themselves are left exactly as they are — this is opening a section, not
+    // recounting it.
+    const changed = section.meter && (section.meter.beats !== state.meter.beats
+      || section.meter.unit !== state.meter.unit);
+    if (changed) state.meter = { ...section.meter };
     panels.chords.applyState();
     panels.rhythm.applyState();
+    if (changed) ctx.onTransportChange?.();
     render();
     save();
-    if (announce) toast(`Editing ${section.name}`);
+    if (announce) {
+      toast(changed
+        ? `Editing ${section.name} — counted in ${meterLabel(section.meter)}`
+        : `Editing ${section.name}`);
+    }
   }
 
   function fork(section, { reroll = false } = {}) {
@@ -186,13 +239,137 @@ export function initSong(ctx, panels) {
       ...of('bridge'),
       ...of('outro'),
     ];
-    state.arrangement = order.map((s) => ({ sectionId: s.id, repeats: 1 }));
+    // Re-laying the running order should not quietly undo what a section was
+    // already doing in it — how many times it went round, and whether it faded.
+    const before = new Map(state.arrangement.map((item) => [item.sectionId, item]));
+    state.arrangement = order.map((s) => ({
+      sectionId: s.id,
+      repeats: before.get(s.id)?.repeats || 1,
+      ...(before.get(s.id)?.fade ? { fade: before.get(s.id).fade } : {}),
+    }));
     render();
     save();
     return undefined;
   }
 
+  // --- composing ------------------------------------------------------------
+
+  fillSelect(ui.letters, [
+    { value: 0, label: '🎲 Let the seed decide' },
+    ...Array.from({ length: LETTER_RANGE[1] - LETTER_RANGE[0] + 1 }, (_, i) => {
+      const count = LETTER_RANGE[0] + i;
+      return { value: count, label: `${count} sections` };
+    }),
+  ], state.compose.letters);
+  bindSlider(ui.contrast, $('#out-compose-contrast'), (v) => `${Math.round(Number(v) * 100)}%`);
+  bindSlider(ui.variation, $('#out-compose-variation'), (v) => `${Math.round(Number(v) * 100)}%`);
+
+  /** The shapes you can ask for, which depend on how many ideas you want. */
+  function syncForms() {
+    const letters = Number(ui.letters.value);
+    const options = letters ? formsFor(letters) : FORMS;
+    fillSelect(ui.form, [
+      { value: 'auto', label: '🎲 Let the seed decide' },
+      ...options.map((form) => ({ value: form.id, label: form.label })),
+    ], state.compose.form);
+    const chosen = FORMS.find((form) => form.id === ui.form.value);
+    const spelled = chosen?.shape.map((index) => String.fromCharCode(65 + index)).join(' ');
+    ui.formHint.textContent = chosen
+      ? `${spelled} — before the intro, the coda and any repeats.`
+      : 'A shape is picked to suit the number of ideas: AABA, ABABCB, a rondo.';
+  }
+
+  /** What the controls currently say, normalised the way the composer wants it. */
+  function readCompose() {
+    return normalizeComposeSettings({
+      seed: ui.composeSeed.value.trim(),
+      letters: Number(ui.letters.value),
+      form: ui.form.value,
+      minutes: Number(ui.minutes.value),
+      intro: ui.intro.checked,
+      outro: ui.outro.checked,
+      fade: ui.fade.checked,
+      contrast: Number(ui.contrast.value),
+      variation: Number(ui.variation.value),
+      modulate: ui.modulate.checked,
+      meterShifts: ui.meterShifts.checked,
+      tempoShifts: ui.tempoShifts.checked,
+      pickTempo: ui.pickTempo.checked,
+    });
+  }
+
+  function writeCompose() {
+    const settings = state.compose;
+    ui.letters.value = String(settings.letters);
+    ui.minutes.value = String(settings.minutes);
+    ui.contrast.value = String(settings.contrast);
+    ui.variation.value = String(settings.variation);
+    for (const [box, value] of [
+      [ui.intro, settings.intro], [ui.outro, settings.outro], [ui.fade, settings.fade],
+      [ui.modulate, settings.modulate], [ui.meterShifts, settings.meterShifts],
+      [ui.tempoShifts, settings.tempoShifts], [ui.pickTempo, settings.pickTempo],
+    ]) box.checked = value;
+    ui.composeSeed.value = settings.seed;
+    for (const slider of [ui.contrast, ui.variation]) slider.dispatchEvent(new Event('input'));
+    syncForms();
+  }
+
+  /**
+   * Writes a whole song. What comes back is an ordinary drawer of sections and
+   * an ordinary running order — the composer has no privileged state — so every
+   * part of it can be opened, rolled again, dragged about or thrown away.
+   */
+  function compose() {
+    const settings = readCompose();
+    const result = composeSong({
+      settings,
+      tempo: state.tempo,
+      meter: state.meter,
+      // It starts where you are: the key on the Chords tab is the home key.
+      rootPc: state.music.rootPc,
+      scaleId: state.music.scaleId,
+    });
+
+    if (ui.replace.checked) {
+      state.sections = [];
+      state.arrangement = [];
+      state.currentSectionId = null;
+    }
+    state.sections.push(...result.sections);
+    state.arrangement.push(...result.arrangement);
+    state.tempo = result.tempo;
+    // The seed of the song you just heard, so it can be typed back in.
+    state.compose = { ...settings, seed: result.seed };
+    ui.composeSeed.value = result.seed;
+    ctx.onTransportChange?.();
+    render();
+    save();
+    toast(`${result.summary} — ${clockTime(result.seconds)}`);
+  }
+
+  function describeComposition() {
+    const plan = buildSongPlan(state.sections, state.arrangement);
+    if (!plan.blocks.length) {
+      ui.composeSummary.textContent = 'Nothing composed yet — it starts from the key '
+        + 'you have open on the Chords tab.';
+      return;
+    }
+    ui.composeSummary.textContent = `${clockTime(songSeconds(plan))} · ${plan.blocks.length} parts`
+      + `${state.compose.seed ? ` · seed ${state.compose.seed}` : ''}`;
+  }
+
   // --- rendering ------------------------------------------------------------
+
+  /** The line under a composed card: what it is, and how it is played. */
+  function sectionTraits(section) {
+    const traits = [...(section.traits || [])];
+    const percent = (value) => `${Math.round(value * 100)}%`;
+    const dynamics = section.dynamics ?? 1;
+    if (dynamics < 0.98 || dynamics > 1.02) traits.push(`played at ${percent(dynamics)}`);
+    const tempoScale = section.tempoScale ?? 1;
+    if (tempoScale !== 1) traits.push(`taken at ${percent(tempoScale)} of the tempo`);
+    return traits;
+  }
 
   function renderSections() {
     if (!state.sections.length) {
@@ -212,9 +389,15 @@ export function initSong(ctx, panels) {
           el('span', { class: 'section-name', text: section.name }),
           el('span', { class: 'section-kind', text: kindLabel(section.kind) }),
         ]),
-        el('div', { class: 'section-meta', text: `${info.key} · ${info.bars} bars · ${info.notes} notes${info.edits ? ` · ${info.edits} hand-edited` : ''}${info.bass ? ` · ${info.bass} on the bass` : ''}` }),
+        el('div', { class: 'section-meta', text: `${info.key} · ${info.bars} bars${info.meter} · `
+          + `${info.notes} notes${info.edits ? ` · ${info.edits} hand-edited` : ''}`
+          + `${info.bass ? ` · ${info.bass} on the bass` : ''}` }),
         el('div', { class: 'section-chords', text: info.chords || '—' }),
         el('div', { class: 'section-meta', text: info.voices }),
+        // A composed section says what makes it different from the others.
+        section.traits?.length
+          ? el('div', { class: 'section-traits', text: sectionTraits(section).join(' · ') })
+          : null,
         el('div', { class: 'section-actions' }, [
           el('button', {
             type: 'button', class: 'btn ghost', title: 'Add it to the running order', onclick: () => addToSong(section),
@@ -265,7 +448,10 @@ export function initSong(ctx, panels) {
         el('span', { text: `×${block.repeats}` }),
         el('button', { type: 'button', class: 'chip-btn', title: 'More repeats', onclick: () => setRepeats(index, 1) }, ['+']),
       ]),
-      el('div', { class: 'chip-bars', text: `${bars(block.length)} bars` }),
+      el('div', {
+        class: 'chip-bars',
+        text: `${bars(block.length, block.meter)} bars${block.fade ? ' · fades' : ''}`,
+      }),
       el('button', {
         type: 'button',
         class: 'chip-remove',
@@ -278,7 +464,7 @@ export function initSong(ctx, panels) {
       }, ['✕']),
     ])));
 
-    ui.summary.textContent = `${plan.blocks.length} parts · ${bars(plan.totalSteps)} bars · `
+    ui.summary.textContent = `${plan.blocks.length} parts · ${clockTime(songSeconds(plan))} · `
       + `${plan.blocks.map((b) => (b.repeats > 1 ? `${b.name}×${b.repeats}` : b.name)).join(' → ')}`;
     return plan;
   }
@@ -305,6 +491,7 @@ export function initSong(ctx, panels) {
     renderSections();
     renderArrangement();
     renderCurrent();
+    describeComposition();
     ctx.onSongChange?.();
   }
 
@@ -336,9 +523,37 @@ export function initSong(ctx, panels) {
     render();
     save();
   });
+  ui.compose.addEventListener('click', compose);
+  ui.letters.addEventListener('change', () => {
+    state.compose = readCompose();
+    // A shape needs as many ideas as it has letters, so the list is rebuilt.
+    state.compose.form = 'auto';
+    syncForms();
+    save();
+  });
+  ui.form.addEventListener('change', () => {
+    state.compose = readCompose();
+    syncForms();
+    save();
+  });
+  for (const input of [
+    ui.minutes, ui.contrast, ui.variation, ui.intro, ui.outro, ui.fade,
+    ui.modulate, ui.meterShifts, ui.tempoShifts, ui.pickTempo, ui.composeSeed,
+  ]) {
+    input.addEventListener('change', () => {
+      state.compose = readCompose();
+      save();
+    });
+  }
+  ui.newComposeSeed.addEventListener('click', () => {
+    ui.composeSeed.value = randomSeed();
+    state.compose = readCompose();
+    save();
+  });
   ui.playSong.addEventListener('click', () => ctx.playSong());
   ui.exportSong.addEventListener('click', () => ctx.exportSong());
 
+  writeCompose();
   render();
 
   return {

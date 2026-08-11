@@ -403,6 +403,55 @@
   <div class="layout">
 
     <div class="controls">
+      <fieldset class="composer">
+        <legend>Compose a whole song</legend>
+        <p class="hint">
+          Two or three ideas that contrast with each other, an intro, a coda, and the repeats
+          changed a little every time they come round. Everything it writes lands in the drawer
+          below as ordinary sections, so you can open any of them and take it somewhere else.
+        </p>
+        <div class="row wrap">
+          <button type="button" class="btn primary" id="compose-song">🎼 Compose a song</button>
+          <label class="field"><span>Ideas</span><select id="compose-letters"></select></label>
+          <label class="field"><span>Minutes</span>
+            <input type="number" id="compose-minutes" min="0.5" max="12" step="0.5" value="2.5">
+          </label>
+        </div>
+        <details id="compose-more">
+          <summary>Everything you can lean on</summary>
+          <label class="field">
+            <span>Shape</span>
+            <select id="compose-form"></select>
+            <small class="hint" id="compose-form-hint"></small>
+          </label>
+          <label class="field slider">
+            <span>Contrast between sections <output id="out-compose-contrast"></output></span>
+            <input type="range" id="compose-contrast" min="0" max="1" step="0.05" value="0.6">
+          </label>
+          <label class="field slider">
+            <span>How much a repeat is altered <output id="out-compose-variation"></output></span>
+            <input type="range" id="compose-variation" min="0" max="1" step="0.05" value="0.55">
+          </label>
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="compose-intro" checked> Intro</label>
+            <label class="check"><input type="checkbox" id="compose-outro" checked> Outro or coda</label>
+            <label class="check"><input type="checkbox" id="compose-fade" checked> Let it fade out</label>
+          </div>
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="compose-modulate" checked> Change key</label>
+            <label class="check"><input type="checkbox" id="compose-meter" checked> Change time signature</label>
+            <label class="check"><input type="checkbox" id="compose-tempo-shifts" checked> Push and pull the tempo</label>
+            <label class="check"><input type="checkbox" id="compose-pick-tempo" checked> Choose the tempo</label>
+          </div>
+          <div class="row">
+            <input type="text" id="compose-seed" class="grow" placeholder="Song seed — empty means surprise me" aria-label="Song seed">
+            <button type="button" class="btn ghost" id="new-compose-seed" title="New random song seed">🎲</button>
+          </div>
+          <label class="check"><input type="checkbox" id="compose-replace" checked> Clear the drawer first</label>
+        </details>
+        <small class="hint" id="compose-summary"></small>
+      </fieldset>
+
       <fieldset>
         <legend>What you have open</legend>
         <p class="hint" id="current-section-status"></p>

@@ -189,14 +189,70 @@ everything you have saved in the obvious order — intro, sections, middle eight
 outro. A song is therefore an optional intro, one or more sections, and an
 optional outro, with anything in between you care to put there.
 
-Sections carry their own key, chords, melody, bass, drum pattern *and
-instruments*, so the kit and the harmony really do change with the section — the
-shelf prints the voices under each card. A section stores the *choice* rather
+Sections carry their own key, chords, melody, bass, drum pattern, time
+signature *and* instruments, so the kit and the harmony really do change with
+the section — the shelf prints the voices under each card, and opening a section
+counted in 3/4 brings the 3/4 back with it. A section stores the *choice* rather
 than the result, so one left on "from the seed" re-derives its sound from its
 own seeds:
 every section you roll turns up in a different colour, and none of them drift
-when you go back to them. Tempo, time signature, feel, tuning and which parts
-sound stay global — they live in the transport.
+when you go back to them. Tempo, feel, tuning and which parts sound stay
+global — they live in the transport.
+
+### Compose a whole song
+
+The other way round: press **🎼 Compose a song** and it writes one, then puts
+the pieces in the drawer for you to argue with.
+
+A song is not more loop. It is *contrast and return* — a verse sets something
+up, the next part goes somewhere else, and when the first thing comes back it
+means more than it did. The Beatles did it with a middle eight that changes key,
+or drops to the relative minor, or arrives in a different time signature, or is
+simply louder and busier than the verse around it. Mozart did it with a rondo:
+A, somewhere else, A again, and the A you hear the third time is not quite the A
+you heard the first. That is what this writes.
+
+It picks a **shape** — AABA, ABABCB, ABACA, a rondo, a suite — and works out how
+many bars each part has to be for the whole thing to last as long as you asked.
+Two to four ideas and about two and a half minutes by default; up to six ideas
+and twelve minutes if you want a side of a record.
+
+Then every letter after the first is pulled deliberately away from the home one.
+The moves it has are the ones a songwriter has:
+
+| | |
+| --- | --- |
+| **Key** | The relative major or minor, the parallel one, up a fourth or a fifth, or up to the flat sixth — the borrowed, cinematic one. |
+| **Mode** | The same tonic heard as Dorian, Phrygian, Lydian, Mixolydian, harmonic minor. |
+| **Time** | A section counted in 3/4, 6/8, 5/4 or 7/8 while the rest is in four. |
+| **Tempo** | A section pushed a few per cent faster, or pulled back — and codas that slow to a stop. |
+| **Timbre** | Another lead, another instrument under it, another kit. A middle eight always changes colour, because that is the contrast people hear first. |
+| **Dynamics** | Held back at 70%, or flat out at 120%, written into the velocities of every part. |
+| **Density** | Busier and more chromatic, or more air in it; chords moving twice as fast or held twice as long. |
+| **Arrangement** | A breakdown with no drums, or no bass; the tune an octave up; half the length. |
+
+Nothing is repeated unchanged forever, either. When a section comes back it may
+come back **altered**: a new tune over the same chords, stripped to nothing,
+harder with a crash on the front — or, the last time round, up a semitone. Those
+arrive as their own sections, named `A′` and `A″`, with the same progression
+underneath, so a key lift really is the same chords a semitone higher.
+
+Around all of it: an **intro** made out of the opening of something you are
+about to hear — the chords alone, the tune with no band, or drums counting you
+in — and a **coda** that fades out, tags, slows to a stop, or lands on one last
+chord. The fade is real: it holds, then ramps every part down to nothing across
+the last block, and it is in the exported MIDI as well as in the playback.
+
+Under **Everything you can lean on** are the dials: how many ideas, the shape,
+how far the sections travel from each other, how much a repeat is altered,
+whether it may change key, time signature or tempo, whether it picks its own
+tempo, and the song's seed. Every song is written off that one seed, so typing
+it back in writes the same song again.
+
+What comes out is not a special object. It is sections and a running order —
+open any of them, roll the melody, drag a note, change the kit, reorder the
+chips, delete the coda. The composer has no privileged state; it is a very fast
+way of doing what the tab already does by hand.
 
 ## Rhythm
 
@@ -312,7 +368,9 @@ section. The readout next to Export MIDI tells you which.
 **Export MIDI** writes a type-1 file with chords, melody, bass and drums on
 separate tracks (drums on channel 10), swing and the humanizer's nudges baked
 in, the time signature on the tempo track, ready to drag into any DAW — the
-loop, or the whole song if that is what you are playing. Each instrument carries
+loop, or the whole song if that is what you are playing. A song whose sections
+change tempo or time signature writes those changes onto the tempo track as
+well, so a DAW draws the bar lines where you heard them. Each instrument carries
 a General MIDI program number, so the file opens on roughly the patch you were
 hearing; a song whose sections change voice writes a program change at each
 join.
@@ -320,7 +378,7 @@ join.
 ## Development
 
 ```sh
-npm test                        # 111 unit tests, no dependencies
+npm test                        # 129 unit tests, no dependencies
 node tools/build-wordlists.mjs  # regenerate data/words.*.json
 ```
 
@@ -343,6 +401,7 @@ src/
     tuning.js       temperaments, microtonal divisions, and instrument detune
     instruments.js  synth recipes for lead, harmony, bass and the drum kits
     sections.js     saved sections and the running order built from them
+    compose.js      writes a whole song: shape, contrast, variation, bookends
     arrange.js      lays the parts out over the loop, or sections end to end
     midi.js         a small type-1 MIDI writer
     audio.js        Web Audio playback

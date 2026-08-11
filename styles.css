@@ -367,9 +367,31 @@ details[open] summary { margin-bottom: 0.5rem; }
   color: var(--accent-soft);
   overflow-wrap: anywhere;
 }
+/* What a composed section says about itself: the key it went to, the kit it
+   swapped in, how hard it is played. */
+.section-traits {
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
 .section-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
 .section-actions .btn { padding: 0.25rem 0.5rem; font-size: 0.78rem; }
 .btn.danger:hover { color: #ff8b73; }
+
+fieldset.composer { border-color: var(--accent-soft); }
+fieldset.composer > .hint { margin-bottom: 0.2rem; }
+fieldset.composer #compose-minutes,
+fieldset.composer #compose-letters { min-width: 6rem; }
+fieldset.composer details { margin-top: 0.5rem; }
+fieldset.composer details > summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--ink-dim);
+  margin-bottom: 0.4rem;
+}
+fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
+#compose-summary { display: block; margin-top: 0.4rem; }
 
 .arrangement { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: stretch; }
 

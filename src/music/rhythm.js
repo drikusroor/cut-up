@@ -317,14 +317,22 @@ function accentFor(index, steps, rng, pulse = Math.max(1, Math.round(steps / 4))
 }
 
 /**
- * Converts a step index into a time offset in seconds. Swing delays every
- * other step, which is what turns a straight sixteenth grid into a shuffle.
+ * How far swing pushes a step off the grid, in seconds. Every other step is
+ * delayed, which is what turns a straight sixteenth grid into a shuffle.
+ *
+ * It is measured in *this* step's length rather than the song's, because a
+ * section can be taken at its own tempo — a shuffle in a half-time coda swings
+ * by half-time sixteenths.
  *
  * @param {number} step
  * @param {number} secondsPerStep
  * @param {number} [swing] 0 = straight, 1 = maximum drag (triplet feel ≈ 0.66)
  */
+export function swingOffset(step, secondsPerStep, swing = 0) {
+  return step % 2 === 1 ? secondsPerStep * swing * 0.5 : 0;
+}
+
+/** Where a step falls, in seconds, when the whole song is at one tempo. */
 export function stepTime(step, secondsPerStep, swing = 0) {
-  const offset = step % 2 === 1 ? secondsPerStep * swing * 0.5 : 0;
-  return step * secondsPerStep + offset;
+  return step * secondsPerStep + swingOffset(step, secondsPerStep, swing);
 }

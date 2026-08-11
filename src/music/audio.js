@@ -7,8 +7,8 @@
 // the same idea with a smaller vocabulary — a table of pieces, and a kit that
 // tunes and stretches all of them at once.
 
-import { arrange } from './arrange.js';
-import { stepTime } from './rhythm.js';
+import { arrange, tempoScaleOf } from './arrange.js';
+import { swingOffset } from './rhythm.js';
 import { bassInstrument, drumKit, harmonyInstrument, leadInstrument } from './instruments.js';
 import { defaultHumanize, humanizeOffset } from './humanize.js';
 import { defaultTuning, noteCents } from './tuning.js';
@@ -44,6 +44,64 @@ const DRUM_VOICES = {
 /** The 808's six-oscillator cymbal, as frequency ratios off a base. */
 const METAL_RATIOS = [1, 1.4471, 1.6171, 1.9265, 2.5028, 2.6637];
 
+/**
+ * The clock a song runs on.
+ *
+ * With one tempo this is a multiplication: step times step length. A song
+ * whose sections lean on the transport — a coda in half time, a middle eight
+ * that pushes — is a piecewise version of the same thing, so the map of where
+ * the tempo changes is turned into segments once and every lookup walks them.
+ * The inverse matters too: the playhead asks which step a moment in time is,
+ * and it has to get the same answer back.
+ *
+ * @param {Array<{step:number, scale:number}>} map
+ * @param {number} base seconds per step at the transport's tempo
+ * @param {number} totalSteps
+ */
+export function makeClock(map, base, totalSteps) {
+  const entries = (map?.length ? [...map] : [{ step: 0, scale: 1 }])
+    .map((entry) => ({ step: Math.max(0, Math.round(entry.step)), scale: tempoScaleOf(entry.scale) }))
+    .sort((a, b) => a.step - b.step);
+  if (entries[0].step > 0) entries.unshift({ step: 0, scale: 1 });
+
+  const segments = [];
+  let at = 0;
+  entries.forEach((entry, index) => {
+    const end = index + 1 < entries.length ? entries[index + 1].step : Math.max(totalSteps, entry.step);
+    const seconds = base / entry.scale;
+    segments.push({ step: entry.step, end, seconds, at });
+    at += Math.max(0, end - entry.step) * seconds;
+  });
+
+  const forStep = (step) => {
+    for (let i = segments.length - 1; i > 0; i--) if (step >= segments[i].step) return segments[i];
+    return segments[0];
+  };
+  const forTime = (time) => {
+    for (let i = segments.length - 1; i > 0; i--) if (time >= segments[i].at) return segments[i];
+    return segments[0];
+  };
+
+  return {
+    /** How long the whole pass lasts, in seconds. */
+    total: Math.max(at, base),
+    /** When a step falls, in seconds from the top. */
+    timeAt(step) {
+      const segment = forStep(step);
+      return segment.at + (step - segment.step) * segment.seconds;
+    },
+    /** How long one step lasts where that step is. */
+    stepSeconds(step) {
+      return forStep(step).seconds;
+    },
+    /** Which step a moment in time lands on — the playhead's question. */
+    stepAt(time) {
+      const segment = forTime(time);
+      return segment.step + (time - segment.at) / segment.seconds;
+    },
+  };
+}
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -53,6 +111,8 @@ export class AudioEngine {
     this.startTime = 0;
     this.loopSeconds = 0;
     this.secondsPerStep = 0;
+    // Where the tempo changes, once a song has told us — see makeClock.
+    this.clock = null;
     this.voices = [];
     // What a one-off preview should sound like. Playback carries its own
     // instruments per note, but a click on a chord card has no note to ask.
@@ -103,10 +163,14 @@ export class AudioEngine {
   }
 
   get currentStep() {
-    if (!this.playing || !this.ctx || !this.secondsPerStep) return -1;
+    if (!this.playing || !this.ctx || !this.loopSeconds) return -1;
     const elapsed = this.ctx.currentTime - this.startTime;
     if (elapsed < 0) return -1;
-    return Math.floor((elapsed % this.loopSeconds) / this.secondsPerStep);
+    // Through the clock rather than by division, so the playhead still lands on
+    // the right chip in a song whose coda is in half time.
+    return Math.floor(this.clock
+      ? this.clock.stepAt(elapsed % this.loopSeconds)
+      : (elapsed % this.loopSeconds) / this.secondsPerStep);
   }
 
   stop() {
@@ -161,12 +225,15 @@ export class AudioEngine {
 
     // Shorter parts repeat to fill the loop — see arrange().
     const {
-      totalSteps, chords, melody, bass, drums,
+      totalSteps, chords, melody, bass, drums, tempoMap,
     } = arrange(song);
-    const secondsPerStep = 60 / tempo / 4;
+    // A section may be taken faster or slower than the transport, so time is a
+    // clock rather than a multiplier. With one tempo it is the same arithmetic.
+    const clock = makeClock(tempoMap, 60 / tempo / 4, totalSteps);
 
-    this.secondsPerStep = secondsPerStep;
-    this.loopSeconds = totalSteps * secondsPerStep;
+    this.clock = clock;
+    this.secondsPerStep = clock.stepSeconds(0);
+    this.loopSeconds = clock.total;
     this.playing = true;
 
     /**
@@ -175,10 +242,14 @@ export class AudioEngine {
      * Nothing is ever scheduled in the past, or the browser fires it late and
      * the whole bar limps.
      */
+    /** Swing delays every other step by a fraction of however long it is here. */
+    const swungTime = (step) => clock.timeAt(step)
+      + swingOffset(step, clock.stepSeconds(step), swing);
+
     const timeOf = (part, step, at, voice) => Math.max(
       ctx.currentTime,
-      at + stepTime(step, secondsPerStep, swing)
-        + humanizeOffset(part, step, feel, voice) * secondsPerStep,
+      at + swungTime(step)
+        + humanizeOffset(part, step, feel, voice) * clock.stepSeconds(step),
     );
 
     /** How far off the piano one note is: temperament, detune and drift. */
@@ -200,9 +271,10 @@ export class AudioEngine {
           // smears the harmony — but they are humanised like everything else.
           const time = Math.max(
             ctx.currentTime,
-            at + (chord.step + humanizeOffset('chords', chord.step, feel)) * secondsPerStep,
+            at + clock.timeAt(chord.step)
+              + humanizeOffset('chords', chord.step, feel) * clock.stepSeconds(chord.step),
           );
-          const duration = chord.length * secondsPerStep * 0.96;
+          const duration = chord.length * clock.stepSeconds(chord.step) * 0.96;
           chord.voicing.forEach((midi, voice) => {
             // Tiny spread so the chord sounds strummed rather than stamped.
             this.voice(
@@ -210,7 +282,9 @@ export class AudioEngine {
               midi,
               time + voice * (spec.spread ?? 0.012),
               duration,
-              0.16,
+              // Chords are struck at a velocity now, so a section can be played
+              // softer than the one before it and a coda can fade.
+              ((chord.velocity ?? 80) / 127) * 0.254,
               centsOf('harmony', { midi, step: chord.step, rootPc: chord.rootPc }),
             );
           });
@@ -222,7 +296,7 @@ export class AudioEngine {
             leadInstrument(note.instrument || instruments.lead),
             note.midi,
             timeOf('melody', note.step, at),
-            Math.max(0.08, note.length * secondsPerStep * 0.92),
+            Math.max(0.08, note.length * clock.stepSeconds(note.step) * 0.92),
             ((note.velocity ?? 96) / 127) * 0.28,
             centsOf('lead', note),
           );
@@ -236,7 +310,7 @@ export class AudioEngine {
             bassInstrument(note.instrument || instruments.bass),
             note.midi,
             timeOf('bass', note.step, at),
-            Math.max(0.08, note.length * secondsPerStep * 0.94),
+            Math.max(0.08, note.length * clock.stepSeconds(note.step) * 0.94),
             ((note.velocity ?? 100) / 127) * 0.26,
             centsOf('bass', note),
           );
