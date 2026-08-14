@@ -22,6 +22,11 @@ python3 -m http.server 8000     # or: npx http-server -p 8000
 Then open <http://localhost:8000>. Any static host works — drop the folder on
 GitHub Pages, Netlify, or a Raspberry Pi, and it works the same.
 
+One optional extra: `npm run taste` serves the same files from a small local
+Node server that can also *write* — it records what you tell it on the [Train](#train)
+tab straight into the repository. Everything else, on every host, still runs
+entirely in the browser.
+
 ### Deploying
 
 `.github/workflows/pages.yml` runs the tests and publishes the repository root
@@ -254,6 +259,158 @@ open any of them, roll the melody, drag a note, change the kit, reorder the
 chips, delete the coda. The composer has no privileged state; it is a very fast
 way of doing what the tab already does by hand.
 
+## Train
+
+The composer picks everything off weighted dice. The dice are good — they know
+what a cadence is and what a middle eight is for — but they do not know what
+*you* like. This tab is where you tell it, by playing a card game against your
+own taste, and where those answers become a small neural network that the
+composer then writes with.
+
+### What it actually is
+
+It is worth being straight about this, because "a neural network that writes
+songs" is not what this is and could not be.
+
+A model that generates music note by note needs hundreds of thousands of
+examples. One person rating sections in the evening will produce a few hundred
+opinions in a year. Those are different problems by three orders of magnitude,
+and anything claiming to bridge them with your data is fooling you.
+
+So the network here does not write anything. It **listens and judges** — you
+show it a section and it guesses how you would have rated it. That is a problem
+that fits the data you can realistically give it, and it is enough, because the
+generator can produce a thousand candidates a second. Ask it for a section, get
+eight, keep the one the model likes best. A few hundred opinions become a
+composer that leans your way, without ever needing the millions of songs a
+generative model would want.
+
+### The game
+
+Press **Skip this hand** or open the tab and it deals two or three sections out
+of the composer's own deck — the same generators, the same seeds, the same
+range of keys, meters and contrasts that a composed song is made of. That
+matters: a model trained on music from a different distribution than the one it
+will be asked to judge has learned to answer a question nobody will ask it.
+
+For each section you are asked four things — the tune, the chords, the groove,
+and the whole — and for each join between two sections, one: **do these belong
+in the same song?** Five buttons, from *No* to *Love it*.
+
+It is built for the keyboard, because the honest description of this activity
+is a grind:
+
+| key | |
+|---|---|
+| <kbd>1</kbd>–<kbd>5</kbd> | answer the highlighted question and move to the next |
+| <kbd>Space</kbd> | play whatever that question is about |
+| <kbd>↑</kbd> <kbd>↓</kbd> | move the cursor without answering |
+| <kbd>Enter</kbd> | save the hand and deal the next |
+
+**Leave anything you have no opinion about unanswered.** A skipped question is
+stored as silence, not as a middling score — the model needs to be able to tell
+"that melody is bad" from "I didn't say". And if a hand turns out to contain
+something you actually want, **＋ Keep these** puts the sections on the Song tab
+like anything else you saved.
+
+### Where your answers go
+
+Serve the app with `npm run taste` instead of `npm start` and a small local
+server records every answer straight into `data/taste.jsonl` as you give it. An
+evening's session is then a `git diff`.
+
+```sh
+npm run taste          # the app on :8000, recording to data/taste.jsonl
+npm run train          # fit the model, write models/taste.json
+npm run train -- --dry # fit and report, write nothing
+```
+
+Without that server — `npm start`, or the live site on GitHub Pages — the tab
+still works, but it has nowhere to write: judgements are kept in the browser and
+**⤓ Export** hands you a `.jsonl` to drop into `data/` yourself. Start the
+recording server later and anything stranded in the browser is pushed through on
+the way past.
+
+Two files are committed, and they are not equal in value:
+
+- **`data/taste.jsonl`** — your opinions. The valuable one. Weights can be
+  refitted in ten seconds; an evening of listening cannot be got back.
+- **`models/taste.json`** — the weights, derived from the above by
+  `npm run train`. If it is ever lost or goes stale, retrain it.
+
+There is no music in `taste.jsonl`. Each line stores the *seed the sections were
+dealt from*, because dealing is deterministic — twelve characters puts the exact
+same bars back on the table a year later. That is why a thousand rounds is a few
+hundred kilobytes, and why changing how the music is measured never costs you a
+single opinion you gave: the trainer re-deals every round and re-measures it
+from scratch.
+
+### Whether to believe it
+
+The number the tab reports is not how well the model fits your answers — any
+model fits your answers, that is what fitting means. It is **how often it
+agreed with you about music it was never trained on**, measured by splitting
+your rounds into folds and testing each fold against a model that never saw it.
+
+The metric is *ranking*: given two things you rated differently, does it put
+them in the right order? That is the only question the composer ever asks it,
+and it has an honest floor — a coin gets 50%.
+
+```
+Agreement with you, on rounds it was not trained on:
+  As a whole  ██████████·········  73.9%  (128 answers)
+  The tune    █████████··········  72.3%  (128 answers)
+  The chords  ████···············  59.8%  (128 answers)
+  The groove  ████████████·······  80.1%  (128 answers)
+  Together    ██████████·········  74.2%  (66 answers)
+
+              0.5 ─────────────── 1.0   (0.5 is a coin)
+```
+
+That figure then **gates the model's own influence**. The *How much say it gets
+when composing* slider is multiplied by how far above a coin the model actually
+got, so one that has not beaten chance has no say at any setting, and the
+composer behaves exactly as it did before there was a model at all. Rate
+everything at random and you will get a model that reports ~50% and changes
+nothing — which is the correct outcome, and the reason the number is worth
+reading.
+
+Expect roughly: under 30 rounds, noise. Around 60–100, something faintly real.
+Past a few hundred, a composer that noticeably leans your way. It is a thing to
+come back to, not an afternoon.
+
+### What it hears
+
+The model cannot hear audio. Every section reaches it as ~80 numbers, each one
+something a musician would actually say — the proportion of melodic intervals
+that are leaps, whether the snare is on the backbeat, how often a two-note
+gesture comes back, whether the bass locks to the kick, how far the chords move
+by fourths. Joins get another ~30 about the seam itself: the distance round the
+circle of fifths, whether the bar changes underneath, the interval from the last
+note of one section to the first of the next.
+
+Choosing those numbers is most of the work, and it is why this can learn
+anything from fifty examples rather than fifty thousand — the listening has
+already been done, in `src/music/features.js`. The model's job is only to work
+out which of them you care about.
+
+### How it composes with it
+
+With a model that has earned a say, each idea in a song is auditioned: several
+candidates are generated and rendered, the model scores them, and the winner is
+*drawn* rather than declared — stacked by rank, with the odds set by how much
+the model has earned. The favourite usually wins; the outsider sometimes does.
+A model that is right 70% of the time is wrong 30% of the time, and a composer
+that always took its top pick would inherit every blind spot it has and stop
+surprising you.
+
+Second and later sections are judged on two things at once and have to pass
+both: whether the section is any good, and whether it belongs in the same song
+as the one before it. A gorgeous idea in the wrong key is still the wrong key.
+
+Given the same seed it still writes the same song back. The model changes what
+gets chosen, never that the choosing is repeatable.
+
 ## Rhythm
 
 A step sequencer with five generators: **euclidean** (pulses spread as evenly as
@@ -378,12 +535,15 @@ join.
 ## Development
 
 ```sh
-npm test                        # 129 unit tests, no dependencies
+npm test                        # 160 unit tests, no dependencies
+npm start                       # serve the app
+npm run taste                   # serve it, recording judgements to data/taste.jsonl
+npm run train                   # fit models/taste.json from data/taste.jsonl
 node tools/build-wordlists.mjs  # regenerate data/words.*.json
 ```
 
 ```
-index.html          markup for all four tabs
+index.html          markup for all five tabs
 styles.css
 src/
   rng.js            seeded randomness — every generator runs off this
@@ -405,10 +565,25 @@ src/
     arrange.js      lays the parts out over the loop, or sections end to end
     midi.js         a small type-1 MIDI writer
     audio.js        Web Audio playback
+    features.js     what a section looks like to a machine: the ~80 numbers
+  ml/
+    net.js          a multilayer perceptron, backward pass included, no deps
+    model.js        the taste model: one shared trunk, four heads and a join
+    train.js        folds, early stopping, and the held-out number that gates it
+    judgements.js   the .jsonl record format — seeds and opinions, no music
+    store.js        loading and saving, with or without a server behind it
   ui/               one module per tab, one for the transport's drawers,
                     plus DOM helpers
   main.js           state, persistence, tabs, transport
-tools/              word-list build script
+data/
+  words.*.json      the dictionaries
+  taste.jsonl       your judgements, one round per line — the file worth keeping
+models/
+  taste.json        the trained weights, derived from the above
+tools/
+  build-wordlists.mjs  regenerate the dictionaries
+  train-taste.mjs      fit the model and write models/taste.json
+  taste-server.mjs     the app plus somewhere to put your answers
 test/               node:test suites
 ```
 

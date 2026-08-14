@@ -23,6 +23,7 @@
     <button class="tab" role="tab" aria-selected="false" data-tab="chords">Chords &amp; melody</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="rhythm">Rhythm</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="song">Song</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="train">Train</button>
   </nav>
 </header>
 
@@ -611,6 +612,67 @@
   <small class="hint" id="play-scope"></small>
   <button type="button" class="btn ghost" id="export-midi">⤓ Export MIDI</button>
 </div>
+
+<section class="panel" id="panel-train" role="tabpanel" aria-label="Train" hidden>
+  <div class="layout">
+
+    <div class="controls">
+      <fieldset>
+        <legend>Teach it what you like</legend>
+        <p class="hint">
+          It deals two or three sections out of the composer's own deck. Listen, say what you
+          think, and it deals again. Nothing here is a quiz with right answers — it is only ever
+          learning <em>your</em> opinion, and the only way it can be wrong is by disagreeing
+          with you.
+        </p>
+        <p class="hint">
+          <kbd>1</kbd>–<kbd>5</kbd> answers the highlighted question and moves on,
+          <kbd>Space</kbd> plays whatever that question is about, <kbd>Enter</kbd> saves the
+          hand and deals the next. Leave anything you have no view on unanswered — a shrug is
+          not a score, and it is better for the model to hear nothing than to hear a guess.
+        </p>
+        <div class="row wrap">
+          <button type="button" class="btn primary" id="train-deal">Save and deal again ⏎</button>
+          <button type="button" class="btn ghost" id="train-skip">Skip this hand</button>
+          <button type="button" class="btn ghost" id="train-keep" title="Put these sections on the Song tab">＋ Keep these</button>
+        </div>
+        <small class="hint" id="train-status"></small>
+      </fieldset>
+
+      <fieldset>
+        <legend>The model</legend>
+        <p class="hint" id="train-verdict"></p>
+        <p class="hint" id="train-detail"></p>
+        <div class="row wrap">
+          <button type="button" class="btn" id="train-fit">Train the model</button>
+          <button type="button" class="btn ghost" id="train-export" title="Download your judgements as taste.jsonl">⤓ Export</button>
+          <button type="button" class="btn ghost" id="train-import">⤒ Import</button>
+          <input type="file" id="train-import-file" accept=".jsonl,.json,.txt" hidden>
+        </div>
+        <label class="field slider">
+          <span>How much say it gets when composing <output id="out-train-strength"></output></span>
+          <input type="range" id="train-strength" min="0" max="1" step="0.05" value="1">
+        </label>
+        <small class="hint">
+          Scaled by how well the model did on rounds it was never trained on, so one that has
+          not beaten a coin has no say at whatever this is set to. Run
+          <code>npm run taste</code> instead of <code>npm start</code> and every answer is
+          written straight to <code>data/taste.jsonl</code>; training then rewrites
+          <code>models/taste.json</code>, and both are yours to commit.
+        </small>
+      </fieldset>
+    </div>
+
+    <div class="output">
+      <div class="train-head">
+        <h2>On the table</h2>
+        <small class="hint" id="train-cards"></small>
+      </div>
+      <div id="train-table"></div>
+    </div>
+
+  </div>
+</section>
 
 <footer class="colophon">
   <p>

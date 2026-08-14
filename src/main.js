@@ -6,6 +6,7 @@ import { initChords } from './ui/chords-panel.js';
 import { initRhythm } from './ui/rhythm-panel.js';
 import { initSong } from './ui/song-panel.js';
 import { initFeel } from './ui/feel-panel.js';
+import { initTrain } from './ui/train-panel.js';
 import { AudioEngine } from './music/audio.js';
 import { songToMidi } from './music/midi.js';
 import { buildSongPlan, clockTime, planSeconds } from './music/sections.js';
@@ -113,6 +114,9 @@ function defaultState() {
     currentSectionId: null,
     // What the composer was last asked for — see music/compose.js.
     compose: defaultComposeSettings(),
+    // How much say the trained model gets when composing, 0..1. Multiplied by
+    // how much the model has actually earned — see ml/model.js.
+    tasteStrength: 1,
   };
 }
 
@@ -134,6 +138,8 @@ function loadState() {
       sections: Array.isArray(stored.sections) ? stored.sections : [],
       arrangement: Array.isArray(stored.arrangement) ? stored.arrangement : [],
       compose: normalizeComposeSettings(stored.compose || base.compose),
+      tasteStrength: Number.isFinite(stored.tasteStrength)
+        ? Math.min(1, Math.max(0, stored.tasteStrength)) : base.tasteStrength,
     };
     // A progression saved before time signatures existed knows how long its
     // chords are in steps but not in bars, which is now the thing you set.
@@ -205,6 +211,10 @@ ctx.onMeterChange = () => {
   ctx.refreshPlayback?.();
 };
 const feelPanel = initFeel(ctx);
+// The Train tab needs the Song tab to exist first: keeping a hand puts sections
+// on the shelf, and composing asks it for the model.
+const trainPanel = initTrain(ctx);
+ctx.taste = () => trainPanel.model();
 // The key lives in the Chords tab but the temperament readout is in the
 // transport, so the two have to be introduced.
 ctx.onKeyChange = () => {
@@ -227,6 +237,7 @@ function showTab(name) {
   $('#transport').hidden = name === 'words';
   if (name === 'chords') chordsPanel.redraw();
   if (name === 'song') songPanel.render();
+  if (name === 'train') trainPanel.refresh();
   renderPlayScope();
   save();
 }
@@ -389,6 +400,37 @@ ctx.refreshPlayback = () => {
   if (audio.playing) startPlayback({ scope: playbackScope });
 };
 ctx.playSong = () => startPlayback({ scope: 'song' });
+
+/**
+ * Plays a handful of sections that are not part of the song — the hands the
+ * Train tab deals. They go through the same arranger, the same voices and the
+ * same tuning as everything else, because a card judged through a different
+ * signal path is a card judged on the wrong thing.
+ */
+ctx.playCards = (sections, { tempo, meter } = {}) => {
+  const plan = buildSongPlan(sections, sections.map((section) => ({ sectionId: section.id, repeats: 1 })));
+  if (!plan.blocks.length) return;
+  ctx.syncInstruments();
+  ctx.syncFeel();
+  playbackScope = 'cards';
+  audio.play({
+    sections: plan.blocks.map((block) => block.song),
+    totalSteps: plan.totalSteps,
+    // The hand brings its own tempo and bar; the transport is left alone,
+    // because auditioning a card should not quietly rewrite the song you have
+    // open on the other tab.
+    tempo: tempo || state.tempo,
+    swing: state.swing,
+    meter: meter || state.meter,
+    feel: state.feel,
+    tuning: state.tuning,
+    parts: state.parts,
+    loop: true,
+  });
+};
+
+/** The Train tab keeping a hand adds sections the Song tab has not drawn yet. */
+ctx.refreshSections = () => songPanel.render();
 ctx.exportSong = () => exportMidi({ scope: 'song' });
 ctx.onSongChange = () => {
   renderPlayScope();
@@ -418,10 +460,10 @@ function frame() {
     lastStep = step;
     // While the arrangement is playing, the step means nothing to the chord
     // cards or the drum grid — they are showing one section, not the song.
-    const inSong = playbackScope === 'song' && step >= 0;
+    const inSong = playbackScope !== 'loop' && step >= 0;
     rhythmPanel.highlight(inSong ? -1 : step);
     chordsPanel.highlight(inSong ? -1 : step);
-    songPanel.highlight(inSong ? step : -1);
+    songPanel.highlight(playbackScope === 'song' && step >= 0 ? step : -1);
   }
   requestAnimationFrame(frame);
 }

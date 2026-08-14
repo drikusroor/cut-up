@@ -745,6 +745,168 @@ function hookLetter(shape) {
   return best;
 }
 
+// --- writing the letters ----------------------------------------------------
+
+/**
+ * The way it has always worked: roll a home section, roll a departure from it
+ * for every other letter, and live with what the dice said.
+ */
+function plainLetters({
+  rng, settings, shape, form, meter, rootPc, scaleId, bars,
+}) {
+  const palette = pickPalette(rng);
+  const home = homeSpec({
+    rng, rootPc, scaleId, meter, bars, palette,
+  });
+  const specs = [home];
+  for (let letter = 1; letter < form.letters; letter++) {
+    specs.push(contrastSpec(home, {
+      rng,
+      settings,
+      contrast: settings.contrast,
+      home,
+      kind: roleOf(shape, letter),
+      index: letter,
+    }));
+  }
+  specs.forEach((spec, index) => {
+    spec.name = String.fromCharCode(65 + index);
+    spec.seedKey = spec.name;
+  });
+  return specs;
+}
+
+/**
+ * How many candidates each letter is auditioned from, and how hard the model's
+ * opinion is allowed to push. Both come off the same dial: a model you trust
+ * completely gets to hear eight and insist on its favourite, one that has
+ * barely beaten a coin gets to hear three and only nudge.
+ */
+function auditionSize(weight) {
+  return Math.max(2, Math.round(2 + weight * 6));
+}
+
+/**
+ * Whether there is anything worth listening to, and how much.
+ *
+ * A model reports its own held-out accuracy and gates itself to zero when it
+ * has not beaten chance, so "is there a model" and "is the model any good" are
+ * the same question and it is asked here, once. Everything downstream can then
+ * assume that a non-null `ears` has actually earned the right to an opinion.
+ */
+function tasteFor(options) {
+  const model = options?.taste;
+  if (!model || typeof model.scoreSection !== 'function') return null;
+  const dial = Number.isFinite(options.tasteStrength) ? Math.min(1, Math.max(0, options.tasteStrength)) : 1;
+  const confidence = Number.isFinite(model.confidence) ? model.confidence : 0;
+  const weight = dial * confidence;
+  if (weight <= 0.001) return null;
+  return { model, weight, size: auditionSize(weight) };
+}
+
+/**
+ * Best of N, against the ears you trained.
+ *
+ * Not "pick the highest", quite. The model is right more often than not, which
+ * is a long way from being right, and a composer that always takes its top
+ * choice inherits every one of its blind spots and stops surprising you — which
+ * for a machine whose entire purpose is to surprise you is a poor trade. So the
+ * winner is drawn rather than declared, with the odds stacked by how much the
+ * model has earned.
+ *
+ * The odds are stacked by *rank*, not by score, and that distinction matters
+ * more than it looks. A sigmoid squashes: eight candidates that a listener
+ * would sort confidently might come back as 0.36 through 0.70, and how tight
+ * that band is depends on nothing more principled than how the last training
+ * run happened to land. Selecting on the raw gaps would therefore make the
+ * composer's decisiveness an accident of calibration — the same model, refitted
+ * on the same opinions, choosing differently because its outputs bunched up.
+ * Ranking throws the widths away and keeps the only thing actually being
+ * claimed: this one, then this one, then this one.
+ *
+ * @param {object[]} candidates specs, already named and seeded
+ * @param {(spec: object) => number} score 0..1, higher is better
+ */
+function audition(candidates, score, { rng, weight }) {
+  if (candidates.length < 2) return candidates[0];
+  const scored = candidates
+    .map((spec) => ({ spec, score: score(spec) }))
+    .sort((a, b) => b.score - a.score);
+  // At full confidence the favourite is about three times as likely as the
+  // runner-up and the also-rans are all but out; at a third of it the field is
+  // barely tilted. Either way the last place keeps a pulse, because a model
+  // that is right 70% of the time is wrong 30% of the time.
+  const selectivity = 1.2 * Math.max(0.1, weight);
+  const chosen = pickWeighted(rng, scored.map((entry, rank) => ({
+    value: entry.spec,
+    weight: Math.exp(-rank * selectivity),
+  })));
+  const entry = scored.find((item) => item.spec === chosen);
+  chosen.tasteScore = round(entry.score);
+  chosen.tasteRank = scored.indexOf(entry) + 1;
+  chosen.auditioned = candidates.length;
+  return chosen;
+}
+
+/**
+ * The same letters, chosen rather than accepted.
+ *
+ * Each candidate gets its own seed key, so the audition is over real music and
+ * not merely over settings: two candidates for A are two different tunes over
+ * two different progressions, not one tune described twice. Whichever wins
+ * keeps its key, and everything downstream — the variants, the intro, the coda
+ * — is built off the section that actually won.
+ */
+function auditionLetters({
+  rng, seed, settings, shape, form, meter, rootPc, scaleId, bars, ears,
+}) {
+  const { model, weight, size } = ears;
+  // Rendering a candidate is the only way to score it — the features are
+  // measured off the notes, not off the dials that produced them.
+  const render = (spec) => renderSection(spec, { seed });
+
+  const homeCandidates = [];
+  for (let i = 0; i < size; i++) {
+    const spec = homeSpec({
+      rng, rootPc, scaleId, meter, bars, palette: pickPalette(rng),
+    });
+    spec.name = 'A';
+    // A tilde key is still a key: whichever candidate wins keeps it, and the
+    // section rendered later off that key is note-for-note the one that was
+    // auditioned.
+    spec.seedKey = i === 0 ? 'A' : `A~${i}`;
+    homeCandidates.push(spec);
+  }
+  const home = audition(homeCandidates, (spec) => model.scoreSection(render(spec)).overall, { rng, weight });
+
+  const specs = [home];
+  const homeSection = render(home);
+
+  for (let letter = 1; letter < form.letters; letter++) {
+    const name = String.fromCharCode(65 + letter);
+    const kind = roleOf(shape, letter);
+    const candidates = [];
+    for (let i = 0; i < size; i++) {
+      const spec = contrastSpec(home, {
+        rng, settings, contrast: settings.contrast, home, kind, index: letter,
+      });
+      spec.name = name;
+      spec.seedKey = i === 0 ? name : `${name}~${i}`;
+      candidates.push(spec);
+    }
+    // A second letter is judged on two things at once, and it has to pass both:
+    // whether it is any good, and whether it belongs in the same song as the
+    // one before it. A gorgeous idea in the wrong key is still the wrong key.
+    specs.push(audition(candidates, (spec) => {
+      const section = render(spec);
+      return model.scoreSection(section).overall * 0.55
+        + model.scorePair(homeSection, section) * 0.45;
+    }, { rng, weight }));
+  }
+
+  return specs;
+}
+
 /**
  * Writes a song.
  *
@@ -754,6 +916,11 @@ function hookLetter(shape) {
  * @param {{beats:number, unit:number}} [options.meter]
  * @param {number} [options.rootPc] the key to start from
  * @param {string} [options.scaleId]
+ * @param {{scoreSection:Function, scorePair:Function, confidence:number}} [options.taste]
+ *   a trained model — see ml/model.js. Given one, every letter is auditioned
+ *   rather than simply rolled. Without one the composer behaves exactly as it
+ *   did before there was a model at all, down to the seed.
+ * @param {number} [options.tasteStrength] 0..1, how much say it gets
  * @returns {{seed:string, sections:object[], arrangement:object[], tempo:number,
  *   meter:object, form:object, seconds:number, steps:number, summary:string}}
  */
@@ -791,26 +958,17 @@ export function composeSong(options = {}) {
     ? Math.min(3, Math.max(1, Math.round(per / bodyBars)))
     : 1;
 
-  // 1. the letters
-  const palette = pickPalette(rng);
-  const home = homeSpec({
-    rng, rootPc, scaleId, meter, bars: bodyBars, palette,
-  });
-  const letterSpecs = [home];
-  for (let letter = 1; letter < form.letters; letter++) {
-    letterSpecs.push(contrastSpec(home, {
-      rng,
-      settings,
-      contrast: settings.contrast,
-      home,
-      kind: roleOf(shape, letter),
-      index: letter,
-    }));
-  }
-  letterSpecs.forEach((spec, index) => {
-    spec.name = String.fromCharCode(65 + index);
-    spec.seedKey = spec.name;
-  });
+  // 1. the letters — either straight off the dice, or the best of a handful as
+  //    judged by a model that has been told what you like.
+  const ears = tasteFor(options);
+  const letterSpecs = ears
+    ? auditionLetters({
+      rng, seed, settings, shape, form, meter, rootPc, scaleId, bars: bodyBars, ears,
+    })
+    : plainLetters({
+      rng, settings, shape, form, meter, rootPc, scaleId, bars: bodyBars,
+    });
+  const home = letterSpecs[0];
 
   // 2. the running order, before anything is repeated or decorated
   const specs = [...letterSpecs];
@@ -952,6 +1110,16 @@ export function composeSong(options = {}) {
     letters: form.letters,
     steps,
     seconds,
+    // What the model had to do with it, if anything — so the Song tab can say
+    // so out loud rather than leaving you to wonder whether the Train tab is
+    // doing anything at all.
+    taste: ears ? {
+      weight: round(ears.weight),
+      auditioned: ears.size,
+      scores: letterSpecs
+        .filter((spec) => Number.isFinite(spec.tasteScore))
+        .map((spec) => ({ name: spec.name, score: spec.tasteScore, rank: spec.tasteRank })),
+    } : null,
     summary: blocks.map((block) => {
       const name = specs[block.spec].name;
       return block.repeats > 1 ? `${name}×${block.repeats}` : name;
@@ -1161,4 +1329,162 @@ function renderSection(spec, { seed }) {
 /** Sliders are stored to two places; a long float in a control reads as noise. */
 function round(value) {
   return Math.round(value * 100) / 100;
+}
+
+// --- dealing a hand ---------------------------------------------------------
+
+/**
+ * Bumped whenever the code below would deal a different hand from the same
+ * seed. Judgements carry it, and the trainer refuses to re-deal a round whose
+ * dealer no longer exists — because scoring your opinion of one piece of music
+ * against a different piece of music is worse than having no opinion at all.
+ */
+export const DEAL_VERSION = 1;
+
+/** The bars the trainer deals in. Mostly four-square, sometimes not. */
+const DEAL_METERS = [
+  { value: { beats: 4, unit: 4 }, weight: 8 },
+  { value: { beats: 3, unit: 4 }, weight: 2 },
+  { value: { beats: 6, unit: 8 }, weight: 2 },
+  { value: { beats: 5, unit: 4 }, weight: 1 },
+  { value: { beats: 7, unit: 8 }, weight: 1 },
+];
+
+/**
+ * How the second card relates to the first — which is the thing being judged as
+ * much as the music is.
+ *
+ * A hand of two ideas that came from the same home section is the ordinary case
+ * and the one the composer will be asked about most. A variant is the same idea
+ * come back changed. A stranger is a section written from scratch in its own
+ * key with its own colours, which is what a bad edit sounds like, and the model
+ * needs to have heard some of those to know the difference.
+ */
+const RELATIONS = [
+  { value: 'contrast', weight: 6 },
+  { value: 'bridge', weight: 3 },
+  { value: 'variant', weight: 3 },
+  { value: 'stranger', weight: 2 },
+];
+
+/**
+ * Deals a hand of sections to be judged.
+ *
+ * Everything here goes through the same generators, in the same order, off the
+ * same kind of seeds as `composeSong` — which is not tidiness, it is the whole
+ * point. A model trained on music from a different distribution than the one it
+ * will be asked to score is a model that has learned to answer a question
+ * nobody is going to ask it. So the trainer deals out of the composer's own
+ * deck, with the dials thrown wide open so a session covers the range rather
+ * than the middle of it.
+ *
+ * Pure and deterministic: the same seed deals the same hand for ever, which is
+ * why a judgement only has to store twelve characters to be able to point at
+ * the exact bars you were listening to when you made it.
+ *
+ * @param {object} options
+ * @param {string} options.seed
+ * @param {number} [options.cards] two or three
+ * @returns {{seed:string, dealer:number, tempo:number, meter:object, contrast:number,
+ *   cards:Array<{name:string, relation:string, section:object, traits:string[]}>}}
+ */
+export function dealRound({ seed = randomSeed(), cards = 2 } = {}) {
+  const key = String(seed);
+  const rng = makeRng(`deal:${key}`);
+  const count = Math.min(3, Math.max(2, Math.round(cards)));
+
+  const meter = pickWeighted(rng, DEAL_METERS);
+  const tempo = pickTempo(rng);
+  const rootPc = randInt(rng, 0, 11);
+  const scaleId = pickWeighted(rng, [
+    { value: 'major', weight: 4 }, { value: 'minor', weight: 4 },
+    { value: 'dorian', weight: 1 }, { value: 'mixolydian', weight: 1 },
+  ]);
+  const bars = pickWeighted(rng, [{ value: 8, weight: 5 }, { value: 4, weight: 3 }, { value: 12, weight: 1 }]);
+
+  // The dials are rolled per hand rather than held at the default, so a
+  // session of judgements covers "these two are nearly the same" and "these two
+  // have nothing to do with each other" and everything between.
+  const contrast = rng();
+  const settings = {
+    ...defaultComposeSettings(), contrast, modulate: true, meterShifts: true, tempoShifts: true,
+  };
+
+  const home = homeSpec({
+    rng, rootPc, scaleId, meter, bars, palette: pickPalette(rng),
+  });
+  home.name = 'A';
+  home.seedKey = 'A';
+
+  const specs = [home];
+  const relations = ['home'];
+
+  for (let index = 1; index < count; index++) {
+    const relation = pickWeighted(rng, RELATIONS);
+    const name = String.fromCharCode(65 + index);
+    let spec;
+
+    if (relation === 'variant') {
+      // The same section, come back changed — an A′, judged as a card of its own.
+      const pool = VARIANTS.filter((variant) => !variant.needs || variant.needs(settings));
+      const variant = pickWeighted(rng, pool.map((item) => ({ value: item, weight: item.weight })));
+      spec = {
+        ...home, traits: [], palette: { ...home.palette }, trackIds: [...home.trackIds],
+      };
+      variant.apply(spec, rng);
+      spec.traits.push(`A, ${spec.label || variant.label}`);
+      spec.name = variantName('A', index);
+      spec.seedKey = 'A';
+      spec.melodyKey = spec.rerollMelody ? `A${index}` : 'A';
+    } else if (relation === 'stranger') {
+      // Not a departure from anything: its own key, its own colours, its own
+      // idea. Sometimes that is exactly the shock a song wants and sometimes it
+      // is two songs stapled together, and only you can say which.
+      spec = homeSpec({
+        rng,
+        rootPc: randInt(rng, 0, 11),
+        scaleId: pickWeighted(rng, [
+          { value: 'major', weight: 3 }, { value: 'minor', weight: 3 },
+          { value: 'lydian', weight: 1 }, { value: 'phrygian', weight: 1 },
+        ]),
+        meter: chance(rng, 0.75) ? meter : pickWeighted(rng, DEAL_METERS),
+        bars: pickWeighted(rng, [{ value: bars, weight: 3 }, { value: 4, weight: 1 }, { value: 8, weight: 1 }]),
+        palette: pickPalette(rng),
+      });
+      spec.traits = ['written on its own, not against A'];
+      spec.name = name;
+      spec.seedKey = name;
+    } else {
+      spec = contrastSpec(home, {
+        rng,
+        settings,
+        contrast,
+        home,
+        kind: relation === 'bridge' ? 'bridge' : 'main',
+        index,
+      });
+      spec.name = name;
+      spec.seedKey = name;
+    }
+
+    specs.push(spec);
+    relations.push(relation);
+  }
+
+  return {
+    seed: key,
+    dealer: DEAL_VERSION,
+    tempo,
+    meter,
+    contrast: round(contrast),
+    key: keyLabel(rootPc, scaleId),
+    cards: specs.map((spec, index) => ({
+      name: spec.name,
+      relation: relations[index],
+      // A card is an ordinary section, so it plays, exports and can be dragged
+      // into a song exactly like anything else you saved by hand.
+      section: renderSection(spec, { seed: `deal:${key}` }),
+      traits: [...(spec.traits || [])],
+    })),
+  };
 }
