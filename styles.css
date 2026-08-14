@@ -600,3 +600,120 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- the Train tab ---------- */
+
+.train-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
+.train-hand {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 0.75rem;
+}
+
+.train-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.train-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.train-card-name { font-size: 1.3rem; font-weight: 650; }
+.train-card-meta { font-size: 0.74rem; color: var(--ink-dim); }
+.train-card-chords {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--accent-soft);
+  overflow-wrap: anywhere;
+}
+.train-card-traits { font-size: 0.72rem; color: var(--ink-faint); font-style: italic; }
+
+.train-join {
+  margin-top: 0.75rem;
+  background: var(--bg-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.8rem;
+}
+.train-join-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+.train-join-title { font-weight: 650; }
+
+/* A button that is currently sounding, so it is obvious what you are hearing. */
+.train-play.is-playing {
+  border-color: var(--accent);
+  color: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.rate-block { display: flex; flex-direction: column; gap: 0.15rem; margin-top: 0.4rem; }
+
+.rate-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.2rem 0.35rem;
+  border-radius: var(--radius);
+  border-left: 2px solid transparent;
+}
+/* The cursor. One row at a time is what the number keys are pointed at, and
+   there is no guessing which. */
+.rate-row.is-cursor {
+  background: #221f19;
+  border-left-color: var(--accent);
+}
+.rate-label {
+  font-size: 0.76rem;
+  color: var(--ink-dim);
+  min-width: 8.5rem;
+  flex: 1 1 8.5rem;
+}
+.rate-row.is-cursor .rate-label { color: var(--ink); }
+.rate-buttons { display: flex; gap: 0.2rem; }
+
+.rate-btn {
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 0.18rem 0.5rem;
+  background: transparent;
+  color: var(--ink-dim);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.rate-btn:hover { color: var(--ink); border-color: var(--ink-faint); }
+.rate-btn.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #16130f;
+  font-weight: 650;
+}
+
+kbd {
+  font-family: var(--mono);
+  font-size: 0.78em;
+  padding: 0.05em 0.35em;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: var(--bg-sunk);
+  color: var(--ink);
+}

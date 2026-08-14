@@ -328,6 +328,11 @@ export function initSong(ctx, panels) {
       // It starts where you are: the key on the Chords tab is the home key.
       rootPc: state.music.rootPc,
       scaleId: state.music.scaleId,
+      // And it writes with whatever ears have been trained on the Train tab.
+      // A model that has not beaten a coin gates itself to nothing, so on a
+      // fresh checkout this line changes precisely nothing.
+      taste: ctx.taste?.(),
+      tasteStrength: state.tasteStrength ?? 1,
     });
 
     if (ui.replace.checked) {
@@ -342,10 +347,14 @@ export function initSong(ctx, panels) {
     state.compose = { ...settings, seed: result.seed };
     ui.composeSeed.value = result.seed;
     ctx.onTransportChange?.();
+    lastTaste = result.taste;
     render();
     save();
     toast(`${result.summary} — ${clockTime(result.seconds)}`);
   }
+
+  /** What the trained model did to the last song, if it had any say in it. */
+  let lastTaste = null;
 
   function describeComposition() {
     const plan = buildSongPlan(state.sections, state.arrangement);
@@ -354,8 +363,13 @@ export function initSong(ctx, panels) {
         + 'you have open on the Chords tab.';
       return;
     }
+    // A model that had a say should say so: an audition that happened silently
+    // is indistinguishable from a Train tab that is not plugged in.
+    const ears = lastTaste
+      ? ` · each idea picked from ${lastTaste.auditioned}, at ${Math.round(lastTaste.weight * 100)}% say`
+      : '';
     ui.composeSummary.textContent = `${clockTime(songSeconds(plan))} · ${plan.blocks.length} parts`
-      + `${state.compose.seed ? ` · seed ${state.compose.seed}` : ''}`;
+      + `${state.compose.seed ? ` · seed ${state.compose.seed}` : ''}${ears}`;
   }
 
   // --- rendering ------------------------------------------------------------

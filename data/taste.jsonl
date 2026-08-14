@@ -1,0 +1,10 @@
+# Your opinions about music, one round per line. See the "Train" chapter in the README.
+#
+# Each line is a JSON object: the seed the sections were dealt from, and what you
+# said about them. There is no music in this file — `dealRound(seed)` in
+# src/music/compose.js puts the exact same bars back on the table whenever they
+# are needed, which is why an evening of judgements is a few kilobytes and why
+# changing the featurizer never costs you an opinion.
+#
+# Append-only. Blank lines and lines starting with # are ignored, so you can
+# annotate a session as you go. To merge two machines, concatenate the files.

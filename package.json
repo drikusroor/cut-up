@@ -7,8 +7,17 @@
   "scripts": {
     "start": "python3 -m http.server 8000",
     "test": "node --test 'test/*.test.js'",
-    "build:words": "node tools/build-wordlists.mjs"
+    "build:words": "node tools/build-wordlists.mjs",
+    "taste": "node tools/taste-server.mjs",
+    "train": "node tools/train-taste.mjs"
   },
-  "keywords": ["cut-up", "songwriting", "lyrics", "chords", "midi", "generative"],
+  "keywords": [
+    "cut-up",
+    "songwriting",
+    "lyrics",
+    "chords",
+    "midi",
+    "generative"
+  ],
   "license": "MIT"
 }
