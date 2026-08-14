@@ -45,6 +45,21 @@ const DRUM_VOICES = {
 const METAL_RATIOS = [1, 1.4471, 1.6171, 1.9265, 2.5028, 2.6637];
 
 /**
+ * How the transport books notes ahead of itself.
+ *
+ * The scheduler wakes on a timer and books everything due before the horizon,
+ * so the window has to be comfortably longer than the gap between two wakeups.
+ * A backgrounded tab gets its timers throttled to about a second, so the floor
+ * is well past that, and the ceiling is there for tabs throttled harder still.
+ */
+const PUMP_MS = 100;
+const MIN_LOOKAHEAD = 1.5;
+const MAX_LOOKAHEAD = 12;
+
+/** How many finished notes may pile up before the engine forgets them. */
+const SWEEP_AT = 512;
+
+/**
  * The clock a song runs on.
  *
  * With one tempo this is a multiplication: step times step length. A song
@@ -113,7 +128,10 @@ export class AudioEngine {
     this.secondsPerStep = 0;
     // Where the tempo changes, once a song has told us — see makeClock.
     this.clock = null;
+    // Every source that is scheduled but not yet finished, so stop() can cut it
+    // short — see track() for why they do not simply accumulate.
     this.voices = [];
+    this.sweepAt = SWEEP_AT;
     // What a one-off preview should sound like. Playback carries its own
     // instruments per note, but a click on a chord card has no note to ask.
     this.instruments = {
@@ -138,7 +156,11 @@ export class AudioEngine {
       limiter.ratio.value = 12;
       this.master.connect(limiter).connect(this.ctx.destination);
     }
-    if (this.ctx.state === 'suspended') this.ctx.resume();
+    // Not just 'suspended': iOS parks a context in 'interrupted' after a call
+    // or a lock screen, and a resume() that is never asked for is a song that
+    // never starts. The promise is ignored on purpose — the scheduler asks
+    // again on its next wakeup if this one did not take.
+    if (this.ctx.state !== 'running') this.ctx.resume?.().catch?.(() => {});
     return this.ctx;
   }
 
@@ -179,14 +201,41 @@ export class AudioEngine {
       clearTimeout(this.loopHandle);
       this.loopHandle = null;
     }
-    for (const voice of this.voices) {
+    for (const { source } of this.voices) {
       try {
-        voice.stop();
+        source.stop();
       } catch {
         // Already stopped; nothing to do.
       }
     }
     this.voices = [];
+    this.sweepAt = SWEEP_AT;
+  }
+
+  /**
+   * Remembers a source until it has finished, so stop() can cut it short.
+   *
+   * The "until" is the point of it. A list that is only ever appended to is a
+   * leak that grows for as long as the transport runs — a full arrangement is
+   * thousands of notes a minute, every one of them holding its whole voice
+   * alive behind it — so notes that have already sounded are dropped once
+   * there are enough of them to be worth the pass.
+   *
+   * @param {AudioScheduledSourceNode} source
+   * @param {number} until when it stops, in context time
+   */
+  track(source, until) {
+    this.voices.push({ source, until });
+    if (this.voices.length > this.sweepAt) this.sweep();
+  }
+
+  /** Forgets the notes that have already finished. */
+  sweep() {
+    const now = this.ctx.currentTime;
+    this.voices = this.voices.filter((voice) => voice.until > now);
+    // Whatever is still ringing is the floor for next time, so a dense
+    // arrangement does not sweep on every single note it plays.
+    this.sweepAt = Math.max(SWEEP_AT, this.voices.length * 2);
   }
 
   /**
@@ -236,21 +285,17 @@ export class AudioEngine {
     this.loopSeconds = clock.total;
     this.playing = true;
 
-    /**
-     * Where an event actually sounds: its step, swung, then nudged off the grid
-     * by however much this part is rushing, dragging or simply not a machine.
-     * Nothing is ever scheduled in the past, or the browser fires it late and
-     * the whole bar limps.
-     */
     /** Swing delays every other step by a fraction of however long it is here. */
     const swungTime = (step) => clock.timeAt(step)
       + swingOffset(step, clock.stepSeconds(step), swing);
 
-    const timeOf = (part, step, at, voice) => Math.max(
-      ctx.currentTime,
-      at + swungTime(step)
-        + humanizeOffset(part, step, feel, voice) * clock.stepSeconds(step),
-    );
+    /**
+     * Where an event sounds relative to the top of the pass: its step, swung,
+     * then nudged off the grid by however much this part is rushing, dragging
+     * or simply not a machine.
+     */
+    const nudged = (part, step, voice) => swungTime(step)
+      + humanizeOffset(part, step, feel, voice) * clock.stepSeconds(step);
 
     /** How far off the piano one note is: temperament, detune and drift. */
     const centsOf = (part, note) => noteCents({
@@ -261,21 +306,26 @@ export class AudioEngine {
       tuning,
     });
 
-    const schedule = (at) => {
-      if (parts.chords) {
-        for (const chord of chords) {
-          // Each note carries the instrument of the section it came from, so a
-          // song can change voice from one section to the next.
-          const spec = harmonyInstrument(chord.instrument || instruments.harmony);
-          // Chords are not swung — a pad landing late on every off-step only
-          // smears the harmony — but they are humanised like everything else.
-          const time = Math.max(
-            ctx.currentTime,
-            at + clock.timeAt(chord.step)
-              + humanizeOffset('chords', chord.step, feel) * clock.stepSeconds(chord.step),
-          );
-          const duration = chord.length * clock.stepSeconds(chord.step) * 0.96;
-          chord.voicing.forEach((midi, voice) => {
+    /**
+     * One pass of the song as a list of things to do and when to do them,
+     * ordered. Nothing is built here — an event is a closure that will make its
+     * nodes later, when the playhead is nearly on it.
+     */
+    const events = [];
+
+    if (parts.chords) {
+      for (const chord of chords) {
+        // Each note carries the instrument of the section it came from, so a
+        // song can change voice from one section to the next.
+        const spec = harmonyInstrument(chord.instrument || instruments.harmony);
+        // Chords are not swung — a pad landing late on every off-step only
+        // smears the harmony — but they are humanised like everything else.
+        const at = clock.timeAt(chord.step)
+          + humanizeOffset('chords', chord.step, feel) * clock.stepSeconds(chord.step);
+        const duration = chord.length * clock.stepSeconds(chord.step) * 0.96;
+        events.push({
+          at,
+          play: (time) => chord.voicing.forEach((midi, voice) => {
             // Tiny spread so the chord sounds strummed rather than stamped.
             this.voice(
               spec,
@@ -287,66 +337,115 @@ export class AudioEngine {
               ((chord.velocity ?? 80) / 127) * 0.254,
               centsOf('harmony', { midi, step: chord.step, rootPc: chord.rootPc }),
             );
-          });
-        }
+          }),
+        });
       }
-      if (parts.melody) {
-        for (const note of melody) {
-          this.voice(
-            leadInstrument(note.instrument || instruments.lead),
-            note.midi,
-            timeOf('melody', note.step, at),
-            Math.max(0.08, note.length * clock.stepSeconds(note.step) * 0.92),
+    }
+    if (parts.melody) {
+      for (const note of melody) {
+        const spec = leadInstrument(note.instrument || instruments.lead);
+        const duration = Math.max(0.08, note.length * clock.stepSeconds(note.step) * 0.92);
+        events.push({
+          at: nudged('melody', note.step),
+          play: (time) => this.voice(
+            spec, note.midi, time, duration,
             ((note.velocity ?? 96) / 127) * 0.28,
             centsOf('lead', note),
-          );
-        }
+          ),
+        });
       }
-      if (parts.bass) {
-        for (const note of bass) {
+    }
+    if (parts.bass) {
+      for (const note of bass) {
+        const spec = bassInstrument(note.instrument || instruments.bass);
+        const duration = Math.max(0.08, note.length * clock.stepSeconds(note.step) * 0.94);
+        events.push({
+          at: nudged('bass', note.step),
           // Low notes carry further than high ones, so the bass is mixed a
           // little under the melody rather than level with it.
-          this.voice(
-            bassInstrument(note.instrument || instruments.bass),
-            note.midi,
-            timeOf('bass', note.step, at),
-            Math.max(0.08, note.length * clock.stepSeconds(note.step) * 0.94),
+          play: (time) => this.voice(
+            spec, note.midi, time, duration,
             ((note.velocity ?? 100) / 127) * 0.26,
             centsOf('bass', note),
-          );
-        }
+          ),
+        });
       }
-      if (parts.drums) {
-        for (const hit of drums) {
+    }
+    if (parts.drums) {
+      for (const hit of drums) {
+        const kit = hit.kit || instruments.kit;
+        const gain = (hit.velocity / 127) * 0.7;
+        events.push({
           // Salted with the piece, so a drummer who drags can drag the snare
           // without dragging the hat that lands on the same step.
-          const time = timeOf('drums', hit.step, at, hit.id);
-          this.drum(hit.id, time, (hit.velocity / 127) * 0.7, hit.kit || instruments.kit);
-        }
+          at: nudged('drums', hit.step, hit.id),
+          play: (time) => this.drum(hit.id, time, gain, kit),
+        });
       }
-    };
+    }
+
+    events.sort((a, b) => a.at - b.at);
 
     const startAt = ctx.currentTime + 0.08;
     this.startTime = startAt;
-    schedule(startAt);
 
-    if (loop) {
-      let nextAt = startAt + this.loopSeconds;
-      const tick = () => {
-        if (!this.playing) return;
-        // Schedule the next pass a little before the current one runs out.
-        if (nextAt - ctx.currentTime < this.loopSeconds) {
-          schedule(nextAt);
-          nextAt += this.loopSeconds;
+    // The transport is a rolling window, not one big booking.
+    //
+    // Scheduling a whole arrangement up front means tens of thousands of nodes
+    // in the graph at once — a seven-minute song is around seventy thousand —
+    // and the audio thread has to walk every one of them, every 128 samples,
+    // for the length of the song. That is what makes a long song stutter,
+    // start late, or never start at all. So only the next second or two is ever
+    // booked, and the rest is built as the playhead reaches it.
+    let origin = startAt;
+    let cursor = 0;
+    let lastPump = ctx.currentTime;
+
+    const pump = () => {
+      if (!this.playing) return;
+      // A context can be suspended out from under us — another tab taking the
+      // hardware, a phone call, a lock screen — and it comes back with the
+      // clock stopped. Ask for it back rather than playing into silence.
+      if (this.ctx.state !== 'running') this.ensure();
+
+      const now = this.ctx.currentTime;
+      // A backgrounded tab has its timers throttled, to a second and sometimes
+      // a great deal worse, so the window has to cover however long the last
+      // gap actually turned out to be — otherwise the song runs out of booked
+      // notes between two ticks and simply stops.
+      const lookahead = Math.min(MAX_LOOKAHEAD, Math.max(MIN_LOOKAHEAD, (now - lastPump) * 4));
+      lastPump = now;
+      const horizon = now + lookahead;
+
+      while (events.length) {
+        if (cursor >= events.length) {
+          if (!loop || !(this.loopSeconds > 0)) break;
+          origin += this.loopSeconds;
+          cursor = 0;
         }
-        this.loopHandle = setTimeout(tick, Math.max(50, (this.loopSeconds * 1000) / 4));
-      };
-      this.loopHandle = setTimeout(tick, Math.max(50, (this.loopSeconds * 1000) / 4));
-    } else {
-      this.loopHandle = setTimeout(() => {
+        const event = events[cursor];
+        if (origin + event.at > horizon) break;
+        try {
+          // Nothing is ever scheduled in the past, or the browser fires it late
+          // and the whole bar limps.
+          event.play(Math.max(now, origin + event.at));
+        } catch {
+          // One note the browser will not build must not take the song with it.
+        }
+        cursor += 1;
+      }
+
+      // A song that is not looping is over once the last note has been booked
+      // and had time to sound.
+      if (!loop && cursor >= events.length && now > origin + this.loopSeconds + 0.5) {
         this.playing = false;
-      }, (this.loopSeconds + 0.5) * 1000);
-    }
+        this.loopHandle = null;
+        return;
+      }
+      this.loopHandle = setTimeout(pump, PUMP_MS);
+    };
+
+    pump();
   }
 
   /**
@@ -397,7 +496,7 @@ export class AudioEngine {
       lfo.connect(vibrato);
       lfo.start(time);
       lfo.stop(time + tail);
-      this.voices.push(lfo);
+      this.track(lfo, time + tail);
     }
 
     for (const partial of spec.partials || [{ type: 'sine' }]) {
@@ -428,13 +527,13 @@ export class AudioEngine {
         modulator.connect(index).connect(osc.frequency);
         modulator.start(time);
         modulator.stop(time + tail);
-        this.voices.push(modulator);
+        this.track(modulator, time + tail);
       }
 
       osc.connect(mix).connect(filter);
       osc.start(time);
       osc.stop(time + tail);
-      this.voices.push(osc);
+      this.track(osc, time + tail);
     }
 
     // Breath, pick noise, hammer — whatever the attack needs.
@@ -451,7 +550,7 @@ export class AudioEngine {
       const noiseTail = Math.min(tail, spec.noise.decay * 8 + 0.05);
       noise.start(time);
       noise.stop(time + noiseTail);
-      this.voices.push(noise);
+      this.track(noise, time + noiseTail);
     }
   }
 
@@ -486,7 +585,7 @@ export class AudioEngine {
     const run = (source, stopAt) => {
       source.start(time);
       source.stop(stopAt);
-      this.voices.push(source);
+      this.track(source, stopAt);
     };
 
     if (spec.kind === 'tonal' || spec.kind === 'wood') {
@@ -612,7 +711,7 @@ export class AudioEngine {
       body.connect(bodyEnv).connect(bus);
       body.start(time);
       body.stop(time + decay(spec.bodyDecay) + 0.05);
-      this.voices.push(body);
+      this.track(body, time + decay(spec.bodyDecay) + 0.05);
     }
   }
 
@@ -637,7 +736,7 @@ export class AudioEngine {
     // stop() must come after start(), or the node throws.
     noise.start(time);
     noise.stop(time + attack + decay + 0.05);
-    this.voices.push(noise);
+    this.track(noise, time + attack + decay + 0.05);
   }
 
   noiseBuffer() {

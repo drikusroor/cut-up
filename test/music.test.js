@@ -54,7 +54,7 @@ import {
   formsFor,
   normalizeComposeSettings,
 } from '../src/music/compose.js';
-import { makeClock } from '../src/music/audio.js';
+import { AudioEngine, makeClock } from '../src/music/audio.js';
 import {
   buildSongPlan,
   forkSection,
@@ -1709,6 +1709,202 @@ test('the clock turns a tempo map into seconds, and back into steps', () => {
   assert.equal(plain.timeAt(8), 1);
   assert.equal(plain.total, 8);
 });
+
+/**
+ * A Web Audio context that counts. Enough of one to run the transport against:
+ * every node records when it was made, and every source records when it was
+ * told to start and stop, so a test can ask how much of the graph is alive at
+ * any moment.
+ */
+function countingContext() {
+  const graph = { created: 0, sources: [], time: 0 };
+  const param = () => ({
+    value: 0,
+    setValueAtTime() {},
+    linearRampToValueAtTime() {},
+    exponentialRampToValueAtTime() {},
+    setTargetAtTime() {},
+  });
+  const node = (extra) => {
+    graph.created += 1;
+    return { connect: (to) => to, disconnect() {}, ...extra };
+  };
+  const source = (extra) => {
+    let record = null;
+    return node({
+      start(at) {
+        record = { startAt: at, stopAt: Infinity, bookedAt: graph.time };
+        graph.sources.push(record);
+      },
+      stop(at) {
+        if (record) record.stopAt = at ?? graph.time;
+      },
+      ...extra,
+    });
+  };
+  graph.ctx = {
+    get currentTime() { return graph.time; },
+    sampleRate: 48000,
+    state: 'running',
+    destination: { connect() {} },
+    resume: async () => {},
+    createGain: () => node({ gain: param() }),
+    createBiquadFilter: () => node({ frequency: param(), Q: param(), type: 'lowpass' }),
+    createDynamicsCompressor: () => node({ threshold: param(), ratio: param() }),
+    createOscillator: () => source({ frequency: param(), detune: param(), type: 'sine' }),
+    createBufferSource: () => source({ buffer: null }),
+    createBuffer: (channels, length) => ({ getChannelData: () => new Float32Array(length) }),
+  };
+  /** How many sources are scheduled but not yet finished — the graph's weight. */
+  graph.live = () => graph.sources
+    .filter((s) => s.stopAt > graph.time && s.bookedAt <= graph.time).length;
+  return graph;
+}
+
+/**
+ * Runs the transport on a virtual clock, so a seven-minute song takes
+ * milliseconds. `throttle` is the floor the browser puts under setTimeout — a
+ * backgrounded tab gets about a second of it.
+ */
+function runTransport(song, { seconds, throttle = 0, sample = 0.05 } = {}) {
+  const graph = countingContext();
+  const realWindow = global.window;
+  const realSetTimeout = global.setTimeout;
+  const realClearTimeout = global.clearTimeout;
+  const timers = new Map();
+  let nextId = 1;
+
+  global.window = { AudioContext: function AudioContext() { return graph.ctx; } };
+  global.setTimeout = (fn, ms) => {
+    const id = nextId;
+    nextId += 1;
+    timers.set(id, { at: graph.time + Math.max(ms, throttle) / 1000, fn });
+    return id;
+  };
+  global.clearTimeout = (id) => timers.delete(id);
+
+  const engine = new AudioEngine();
+  const peak = { live: 0, tracked: 0 };
+  try {
+    engine.play(song);
+    while (graph.time < seconds) {
+      graph.time = Math.round((graph.time + sample) * 1e6) / 1e6;
+      for (const [id, timer] of [...timers]) {
+        if (timer.at <= graph.time) {
+          timers.delete(id);
+          timer.fn();
+        }
+      }
+      peak.live = Math.max(peak.live, graph.live());
+      peak.tracked = Math.max(peak.tracked, engine.voices.length);
+    }
+  } finally {
+    global.window = realWindow;
+    global.setTimeout = realSetTimeout;
+    global.clearTimeout = realClearTimeout;
+  }
+  return { engine, graph, peak };
+}
+
+/** A long arrangement: six sections, four passes each, all four parts busy. */
+function longSong(overrides = {}) {
+  const bar = 16;
+  const chordVoicings = Array.from({ length: 8 }, () => [60, 64, 67, 72]);
+  const melody = [];
+  const bass = [];
+  for (let step = 0; step < 8 * bar; step += 2) melody.push({ midi: 60 + (step % 12), step, length: 2 });
+  for (let step = 0; step < 8 * bar; step += 4) bass.push({ midi: 40 + (step % 7), step, length: 4 });
+  const pieces = ['kick', 'snare', 'hat', 'openhat', 'ride', 'clap', 'shaker', 'tamb'];
+  const section = {
+    chordVoicings,
+    stepsPerChord: bar,
+    melody,
+    bass,
+    rhythm: {
+      tracks: pieces.map((id, i) => ({
+        id,
+        note: 36 + i,
+        pattern: Array.from({ length: 32 }, (_, step) => step % (i + 2) === 0),
+        velocities: Array.from({ length: 32 }, () => 100),
+      })),
+    },
+    instruments: {
+      lead: 'saw', harmony: 'pad', bass: 'finger', kit: 'studio',
+    },
+    stepsPerBar: bar,
+    repeats: 4,
+  };
+  return {
+    sections: Array.from({ length: 6 }, () => ({ ...section })),
+    tempo: 100,
+    swing: 0.12,
+    loop: true,
+    ...overrides,
+  };
+}
+
+test('a long song is booked a window at a time, not all at once', () => {
+  // Seven and a half minutes of music. Scheduling it up front built about
+  // seventy thousand nodes in one go and left the audio thread walking every
+  // one of them on every render quantum, which is what made long songs stutter,
+  // start late, or never start at all.
+  const { graph, peak } = runTransport(longSong(), { seconds: 120 });
+
+  assert.ok(peak.live < 600, `graph held ${peak.live} live sources at once`);
+  assert.ok(graph.sources.length > 500, 'the song should actually be playing');
+  // Every note is booked before it is due — a note handed to the browser late
+  // is a note the browser fires late.
+  const late = graph.sources.filter((s) => s.startAt <= s.bookedAt);
+  assert.equal(late.length, 0, `${late.length} notes were booked in the past`);
+});
+
+test('the transport forgets the notes it has already played', () => {
+  // The list of live sources used to be appended to and never pruned, so a
+  // looping arrangement leaked every note it had ever sounded.
+  const { engine, peak } = runTransport(longSong(), { seconds: 240 });
+
+  assert.ok(peak.tracked < 2000, `held ${peak.tracked} finished notes`);
+  assert.ok(engine.voices.length < 2000, `ended holding ${engine.voices.length}`);
+  assert.ok(engine.playing, 'a looping song is still going');
+});
+
+test('playback survives a tab whose timers are throttled', () => {
+  // A backgrounded tab gets its setTimeout floored at about a second, so the
+  // window has to be wider than that or the song runs out of booked notes
+  // between two wakeups and simply stops.
+  const { graph, engine } = runTransport(longSong(), { seconds: 120, throttle: 1000 });
+
+  const late = graph.sources.filter((s) => s.startAt <= s.bookedAt);
+  assert.equal(late.length, 0, `${late.length} notes were booked in the past`);
+
+  const starts = graph.sources.map((s) => s.startAt).sort((a, b) => a - b);
+  const gap = starts.slice(1).reduce((max, at, i) => Math.max(max, at - starts[i]), 0);
+  // The busiest gap in this arrangement is one melody note, 0.3s apart.
+  assert.ok(gap < 1, `playback went quiet for ${gap.toFixed(2)}s`);
+  assert.ok(engine.playing);
+});
+
+test('a song that is not looping stops itself once it has finished', () => {
+  const song = longSong({ loop: false, sections: undefined, ...oneShortSection() });
+  const { engine, graph } = runTransport(song, { seconds: 60 });
+  assert.ok(graph.sources.length > 0, 'it should have played something first');
+  assert.equal(engine.playing, false);
+  // And it played once, rather than going round again.
+  const last = Math.max(...graph.sources.map((s) => s.startAt));
+  assert.ok(last < 15, `still sounding notes at ${last.toFixed(1)}s`);
+});
+
+/** One eight-bar section on its own — a few seconds of music. */
+function oneShortSection() {
+  return {
+    chordVoicings: [[60, 64, 67], [57, 60, 64]],
+    stepsPerChord: 16,
+    melody: [{ midi: 72, step: 0, length: 4 }, { midi: 74, step: 8, length: 4 }],
+    bass: [{ midi: 48, step: 0, length: 8 }],
+    rhythm: null,
+    stepsPerBar: 16,
+  };
+}
 
 test('a tempo change and a bar change are written into the exported file', () => {
   const a = testSection('A', 'Am F');
