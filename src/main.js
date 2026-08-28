@@ -314,7 +314,7 @@ function buildArrangedSong() {
  * Whichever of the two the Song tab is asking for. The transport follows the
  * tab you are on, so play means the same thing as whatever is in front of you.
  */
-function buildSong({ scope = state.tab === 'song' ? 'song' : 'loop' } = {}) {
+function buildSong({ scope = state.tab === 'song' ? 'song' : 'loop', startStep } = {}) {
   const song = (scope === 'song' && buildArrangedSong()) || buildLoop();
   return {
     ...song,
@@ -327,6 +327,8 @@ function buildSong({ scope = state.tab === 'song' ? 'song' : 'loop' } = {}) {
     tuning: state.tuning,
     parts: state.parts,
     loop: true,
+    // A jump into the middle of the pass — see AudioEngine.play.
+    ...(startStep > 0 ? { startStep } : {}),
   };
 }
 
@@ -357,7 +359,7 @@ function startPlayback(options) {
   playbackScope = options?.scope || (state.tab === 'song' ? 'song' : 'loop');
   ctx.syncInstruments();
   ctx.syncFeel();
-  audio.play(buildSong({ scope: playbackScope }));
+  audio.play(buildSong({ scope: playbackScope, startStep: options?.startStep }));
 }
 
 function exportMidi(options) {
@@ -400,6 +402,28 @@ ctx.refreshPlayback = () => {
   if (audio.playing) startPlayback({ scope: playbackScope });
 };
 ctx.playSong = () => startPlayback({ scope: 'song' });
+
+/** Which block of the arrangement is currently sounding, or -1 if none is. */
+function currentSongBlock(plan) {
+  if (!audio.playing || playbackScope !== 'song') return -1;
+  const step = audio.currentStep;
+  return plan.blocks.findIndex((b) => step >= b.start && step < b.start + b.length);
+}
+
+/**
+ * Jumps the transport to the start of the next or previous section. Nothing
+ * is rebuilt — it is the same song, entered at a different step — so playback
+ * carries on exactly as if you had let it play there.
+ */
+ctx.skipSection = (delta) => {
+  const plan = buildSongPlan(state.sections, state.arrangement);
+  if (!plan.blocks.length) return;
+  const index = currentSongBlock(plan);
+  const target = index < 0
+    ? (delta > 0 ? 0 : plan.blocks.length - 1)
+    : Math.min(plan.blocks.length - 1, Math.max(0, index + delta));
+  startPlayback({ scope: 'song', startStep: plan.blocks[target].start });
+};
 
 /**
  * Plays a handful of sections that are not part of the song — the hands the

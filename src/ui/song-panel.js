@@ -54,6 +54,8 @@ export function initSong(ctx, panels) {
     forkSection: $('#fork-section'),
     playSong: $('#play-song'),
     exportSong: $('#export-song-midi'),
+    prevSection: $('#prev-section'),
+    nextSection: $('#next-section'),
     autofill: $('#autofill-song'),
     clearSong: $('#clear-song'),
     sections: $('#sections-out'),
@@ -414,6 +416,9 @@ export function initSong(ctx, panels) {
           : null,
         el('div', { class: 'section-actions' }, [
           el('button', {
+            type: 'button', class: 'btn ghost', title: 'Play just this section', onclick: () => ctx.playCards?.([section], { meter: section.meter }),
+          }, ['▶']),
+          el('button', {
             type: 'button', class: 'btn ghost', title: 'Add it to the running order', onclick: () => addToSong(section),
           }, ['＋ Song']),
           el('button', {
@@ -435,6 +440,8 @@ export function initSong(ctx, panels) {
 
   function renderArrangement() {
     const plan = buildSongPlan(state.sections, state.arrangement);
+    ui.prevSection.disabled = !plan.blocks.length;
+    ui.nextSection.disabled = !plan.blocks.length;
 
     if (!plan.blocks.length) {
       ui.arrangement.replaceChildren(el('p', { class: 'hint' }, [
@@ -566,6 +573,8 @@ export function initSong(ctx, panels) {
   });
   ui.playSong.addEventListener('click', () => ctx.playSong());
   ui.exportSong.addEventListener('click', () => ctx.exportSong());
+  ui.prevSection.addEventListener('click', () => ctx.skipSection(-1));
+  ui.nextSection.addEventListener('click', () => ctx.skipSection(1));
 
   writeCompose();
   render();
