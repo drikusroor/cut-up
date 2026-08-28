@@ -532,10 +532,50 @@ a General MIDI program number, so the file opens on roughly the patch you were
 hearing; a song whose sections change voice writes a program change at each
 join.
 
+### Export audio
+
+**Export audio** renders the same thing to a sound file: the loop you have
+open, one saved section from the shelf (the ⤓ Audio button on its card), or the
+whole arrangement. Muted parts are left out, exactly as they are in the MIDI,
+and a loop can be sent round more than once if four bars is shorter than you
+wanted.
+
+The render is offline — the whole song is synthesised as fast as the machine
+can manage rather than in real time, through the same voices, the same
+humanizer and the same master bus you were listening to. How much faster than
+real time depends on how busy the arrangement is and what you are on, but it is
+never slower, and a bar tells you how far along it is.
+
+What it can be written *as* depends on the browser, and the dialog says which
+is which rather than guessing:
+
+| Format | How it is made | Where |
+| --- | --- | --- |
+| **WAV** 16- or 24-bit | written here, byte by byte | everywhere |
+| **M4A** (AAC) | the browser's own encoder, in a container written here | Chrome, Edge and Safari — wherever it has an AAC encoder |
+| **Opus** in WebM or Ogg | recorded through MediaRecorder | Chrome and Firefox, whichever container they will record |
+| **MP3** | MediaRecorder, where a browser offers it | almost nowhere |
+
+Nothing is bundled to make this work — no encoder library, no build step, still
+a folder of text files. That is also the catch: almost no browser will encode
+MP3, so the dialog greys it out and says so. A WAV converts to one in a second
+with anything.
+
+Anything recorded rather than encoded is captured in real time, because that is
+the only way MediaRecorder works: a three-minute song takes three minutes to
+write, and the dialog says so before you start rather than after. A WAV never
+is. An M4A only is on a browser that will record AAC but not encode it, which
+the dialog has already worked out by the time you open it.
+
+Before the M4A is offered at all, a quarter second of silence is encoded,
+wrapped and handed back to the browser to decode. The AAC frames come from the
+browser but the container around them is ours, and a file it cannot read itself
+is not one worth handing to anybody.
+
 ## Development
 
 ```sh
-npm test                        # 160 unit tests, no dependencies
+npm test                        # 177 unit tests, no dependencies
 npm start                       # serve the app
 npm run taste                   # serve it, recording judgements to data/taste.jsonl
 npm run train                   # fit models/taste.json from data/taste.jsonl
@@ -564,7 +604,12 @@ src/
     compose.js      writes a whole song: shape, contrast, variation, bookends
     arrange.js      lays the parts out over the loop, or sections end to end
     midi.js         a small type-1 MIDI writer
-    audio.js        Web Audio playback
+    synth.js        the voices, the kit and the master bus — every sound
+    audio.js        the transport: the clock, and one pass as a list of events
+    render.js       the same events booked into an OfflineAudioContext
+    wav.js          a WAV writer: a header and the samples
+    mp4.js          a minimal .m4a container for the browser's AAC frames
+    export-audio.js what this browser can write, and which path writes it
     features.js     what a section looks like to a machine: the ~80 numbers
   ml/
     net.js          a multilayer perceptron, backward pass included, no deps
@@ -573,7 +618,7 @@ src/
     judgements.js   the .jsonl record format — seeds and opinions, no music
     store.js        loading and saving, with or without a server behind it
   ui/               one module per tab, one for the transport's drawers,
-                    plus DOM helpers
+                    one for the export dialog, plus DOM helpers
   main.js           state, persistence, tabs, transport
 data/
   words.*.json      the dictionaries

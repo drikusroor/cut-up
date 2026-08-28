@@ -64,7 +64,11 @@ export async function copyText(text, label = 'Copied') {
 }
 
 export function download(filename, data, mime = 'text/plain') {
-  const blob = data instanceof Uint8Array ? new Blob([data], { type: mime }) : new Blob([data], { type: `${mime};charset=utf-8` });
+  // Text is the common case and wants a charset; bytes and an already-made
+  // blob — an encoded audio file, say — are handed over as they are.
+  let blob = data;
+  if (data instanceof Uint8Array) blob = new Blob([data], { type: mime });
+  else if (!(data instanceof Blob)) blob = new Blob([data], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const link = el('a', { href: url, download: filename });
   document.body.append(link);

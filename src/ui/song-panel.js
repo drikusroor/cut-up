@@ -54,6 +54,7 @@ export function initSong(ctx, panels) {
     forkSection: $('#fork-section'),
     playSong: $('#play-song'),
     exportSong: $('#export-song-midi'),
+    exportSongAudio: $('#export-song-audio'),
     autofill: $('#autofill-song'),
     clearSong: $('#clear-song'),
     sections: $('#sections-out'),
@@ -424,6 +425,12 @@ export function initSong(ctx, panels) {
           }, ['Fork']),
           el('button', {
             type: 'button',
+            class: 'btn ghost',
+            title: 'Render this section on its own as an audio file',
+            onclick: () => ctx.exportSectionAudio?.(section),
+          }, ['⤓ Audio']),
+          el('button', {
+            type: 'button',
             class: 'btn ghost danger',
             title: 'Delete this section',
             onclick: () => removeSection(section),
@@ -566,6 +573,7 @@ export function initSong(ctx, panels) {
   });
   ui.playSong.addEventListener('click', () => ctx.playSong());
   ui.exportSong.addEventListener('click', () => ctx.exportSong());
+  ui.exportSongAudio.addEventListener('click', () => ctx.exportSongAudio());
 
   writeCompose();
   render();
