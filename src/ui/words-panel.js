@@ -147,6 +147,8 @@ export function initWords(ctx) {
     w.titles = result.titles;
     renderLines();
     save();
+    // The Chords tab may be singing these, so it needs to know they changed.
+    ctx.onWordsChange?.();
   }
 
   function renderLines() {
