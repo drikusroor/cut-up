@@ -274,6 +274,8 @@ export class AudioEngine {
    * @param {number} [song.totalSteps]
    * @param {boolean} [song.loop]
    * @param {{chords?:boolean, melody?:boolean, bass?:boolean, drums?:boolean, vocal?:boolean}} [song.parts]
+   * @param {number} [song.startStep] where to enter the pass — a seek, not a
+   *   loop point: later passes still start again from the top.
    */
   play(song) {
     this.stop();
@@ -429,7 +431,13 @@ export class AudioEngine {
     events.sort((a, b) => a.at - b.at);
 
     const startAt = ctx.currentTime + 0.08;
-    this.startTime = startAt;
+    // A seek: the pass is entered partway through rather than at the top, so
+    // "now" has to line up with wherever startStep falls in it. Later passes
+    // are unaffected — once the loop wraps it plays from the top as normal.
+    const seekAt = song.startStep > 0
+      ? Math.min(this.loopSeconds, Math.max(0, clock.timeAt(song.startStep)))
+      : 0;
+    this.startTime = startAt - seekAt;
 
     // The transport is a rolling window, not one big booking.
     //
@@ -439,8 +447,11 @@ export class AudioEngine {
     // for the length of the song. That is what makes a long song stutter,
     // start late, or never start at all. So only the next second or two is ever
     // booked, and the rest is built as the playhead reaches it.
-    let origin = startAt;
-    let cursor = 0;
+    let origin = this.startTime;
+    // Events before the seek point are skipped for this first pass only — the
+    // cursor rejoins the top of the list once the loop wraps.
+    let cursor = seekAt > 0 ? events.findIndex((event) => event.at >= seekAt) : 0;
+    if (cursor < 0) cursor = events.length;
     let lastPump = ctx.currentTime;
 
     const pump = () => {

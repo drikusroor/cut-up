@@ -259,6 +259,7 @@ Each saved section can be:
 
 | | |
 | --- | --- |
+| **▶** | Play just that section on its own, at its own time signature. |
 | **＋ Song** | Drop it into the running order. |
 | **Edit** | Open it back up in the other tabs, exactly as you left it. |
 | **Fork** | Copy it into a new section, so you can take a variation somewhere else without losing the original. **Fork a variation** does the same and rolls a new melody over the same chords — the quick way to get a B out of an A. |
@@ -268,6 +269,11 @@ each one repeats, and drop them out again with ✕. **Auto-arrange** lays out
 everything you have saved in the obvious order — intro, sections, middle eight,
 outro. A song is therefore an optional intro, one or more sections, and an
 optional outro, with anything in between you care to put there.
+
+While the song is playing, **⏮ Previous section** and **Next section ⏭** jump
+the playhead straight to the start of the section before or after the one
+that is currently sounding — a seek, not a restart, so the transport just
+carries on from there.
 
 Sections carry their own key, chords, melody, bass, drum pattern, time
 signature *and* instruments, so the kit and the harmony really do change with
