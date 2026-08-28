@@ -32,6 +32,7 @@ import {
   diatonicChord, generateProgression, getScale, keyLabel, voiceProgression,
 } from './theory.js';
 import { applyMelodyEdits, emptyMelodyEdits, generateMelody } from './melody.js';
+import { normalizeVocal } from './vocal.js';
 import { generateBass } from './bass.js';
 import { generateRhythm, randomKitPieces } from './rhythm.js';
 import { DEFAULT_METER, meterInfo, normalizeMeter } from './meter.js';
@@ -1079,10 +1080,23 @@ export function composeSong(options = {}) {
   for (const block of blocks) if (!heard.includes(block.spec)) heard.push(block.spec);
   const sections = [];
   const byspec = new Map();
-  for (const index of heard) {
+  // The words are dealt out across the song rather than repeated: each idea
+  // starts further down the lyric than the one before it, so a verse and a
+  // chorus sing different lines, and a song longer than the lyric comes round
+  // again — which is what a chorus is.
+  const vocal = normalizeVocal(options.vocal);
+  const chunk = vocal.lines.length
+    ? Math.max(1, Math.ceil(vocal.lines.length / Math.max(1, heard.length)))
+    : 1;
+  heard.forEach((index, order) => {
     byspec.set(index, sections.length);
-    sections.push(renderSection(specs[index], { seed }));
-  }
+    sections.push(renderSection(specs[index], {
+      seed,
+      vocal: vocal.on && vocal.lines.length
+        ? { ...vocal, lines: rotate(vocal.lines, order * chunk) }
+        : null,
+    }));
+  });
   const arrangement = blocks.map((block) => {
     const entry = { sectionId: sections[byspec.get(block.spec)].id, repeats: block.repeats };
     if (specs[block.spec].fade) entry.fade = true;
@@ -1187,7 +1201,7 @@ function fitDuration(blocks, {
  * open it, roll its melody, drag its notes, and it behaves like anything else
  * you saved by hand.
  */
-function renderSection(spec, { seed }) {
+function renderSection(spec, { seed, vocal = null }) {
   const grid = meterInfo(spec.meter);
   const stepsPerChord = specStepsPerChord(spec);
   const melodyKey = spec.melodyKey || spec.seedKey;
@@ -1292,6 +1306,10 @@ function renderSection(spec, { seed }) {
     bassMotion: round(spec.bassMotion),
     bassCounter: round(spec.bassCounter),
     bassOctave: spec.bassOctave,
+    // A composed section sings if the Voice box was on when you pressed the
+    // button, with its own share of the lyric frozen into it — so it goes on
+    // singing that verse after the words have been rerolled.
+    ...(vocal ? { vocal } : {}),
     // Composed sections are voiced on purpose rather than by the seed: a song
     // whose every section arrives in a different random colour is a shuffle,
     // not an arrangement. Contrast in timbre is a decision here, like the key.
@@ -1324,6 +1342,13 @@ function renderSection(spec, { seed }) {
     tempoScale: round(spec.tempoScale),
     traits: spec.traits,
   });
+}
+
+/** The same lines, starting from a different one. */
+function rotate(lines, by) {
+  if (!lines.length) return [];
+  const at = ((by % lines.length) + lines.length) % lines.length;
+  return [...lines.slice(at), ...lines.slice(0, at)];
 }
 
 /** Sliders are stored to two places; a long float in a control reads as noise. */

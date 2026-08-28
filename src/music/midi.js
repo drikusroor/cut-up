@@ -33,6 +33,17 @@ function str(text) {
   return [...text].map((c) => c.charCodeAt(0));
 }
 
+/**
+ * Text as bytes, for the meta events that carry words. Lyrics are the one place
+ * in this file where a character can be outside ASCII — a Dutch cut-up is full
+ * of them — so they go out as UTF-8 rather than as truncated code points.
+ */
+function textBytes(text) {
+  const value = String(text ?? '');
+  if (typeof TextEncoder === 'function') return [...new TextEncoder().encode(value)];
+  return str(value).map((byte) => byte & 0xff);
+}
+
 function uint32(value) {
   return [(value >> 24) & 0xff, (value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
 }
@@ -57,7 +68,10 @@ function chunk(id, data) {
  * eight is counted in three, comes out of here with the bar lines a DAW draws
  * in the right places.
  *
- * @param {{name?: string, channel?: number, tempo?: number, meter?: {beats:number, unit:number}, tempoMap?: Array<{tick:number, tempo:number}>, meterMap?: Array<{tick:number, meter:object}>, notes: Array<{midi:number, tick:number, durationTicks:number, velocity?:number, program?:number, bend?:number}>}} track
+ * A note may carry a `lyric`, which goes in as the meta event a karaoke player
+ * reads — so the words come out of here stuck to the notes they are sung on.
+ *
+ * @param {{name?: string, channel?: number, tempo?: number, meter?: {beats:number, unit:number}, tempoMap?: Array<{tick:number, tempo:number}>, meterMap?: Array<{tick:number, meter:object}>, notes: Array<{midi:number, tick:number, durationTicks:number, velocity?:number, program?:number, bend?:number, lyric?:string}>}} track
  */
 function trackChunk(track) {
   const {
@@ -123,6 +137,12 @@ function trackChunk(track) {
     if (note.bend) {
       const value = clamp(Math.round(8192 + (note.bend / BEND_RANGE_CENTS) * 8192), 0, 16383);
       events.push({ tick: start, order: 2.5, bytes: [0xe0 | channel, value & 0x7f, (value >> 7) & 0x7f] });
+    }
+    if (note.lyric) {
+      // FF 05: the lyric meta event, which is how a karaoke file and every DAW
+      // worth the name knows which syllable belongs to which note.
+      const bytes = textBytes(note.lyric);
+      events.push({ tick: start, order: 2.6, bytes: [0xff, 0x05, ...writeVarInt(bytes.length), ...bytes] });
     }
     events.push({ tick: start, order: 3, bytes: [0x90 | channel, midi, velocity] });
     events.push({ tick: end, order: 2, bytes: [0x80 | channel, midi, 0] });
@@ -253,6 +273,11 @@ export function songToMidi(song) {
         velocity: n.velocity ?? 96,
         program: leadInstrument(n.instrument || instruments.lead).program,
         bend: bendOf('lead', n),
+        // A held vowel is written the way singers write one: the syllable on
+        // the note it starts on, and nothing on the notes it runs over.
+        lyric: n.syllable && !n.syllable.tie
+          ? `${n.syllable.text}${n.syllable.wordEnd ? ' ' : ''}`
+          : undefined,
       })),
     });
   }

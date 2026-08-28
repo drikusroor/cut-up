@@ -6,7 +6,7 @@ Brion Gysin and William Burroughs cut printed pages into strips and reassembled
 them at random; David Bowie did the same with a pile of newspapers, and later
 with a program he called the Verbasizer, to write lyrics for *Diamond Dogs* and
 *Outside*. This does that for you — and then does the same trick to chord
-progressions, melodies and drum patterns.
+progressions, melodies and drum patterns, and then sings the one on the other.
 
 Everything runs client-side. No build step, no dependencies, nothing uploaded.
 
@@ -63,7 +63,8 @@ Four methods:
 | **Fold-in** | Gysin's fold-in: two texts laid over each other, read across the seam. Fill in the second text box. |
 
 Lines you like can be **locked** (🔒 keeps them through a reroll) or **kept**
-(★ files them in the Keepers pad, which persists in your browser). The app also
+(★ files them in the Keepers pad, which persists in your browser). They can also
+be [sung](#the-voice). The app also
 suggests a few titles from whatever it just produced.
 
 Everything is seeded — see [Seeds](#seeds) — so a line you liked is never lost.
@@ -168,6 +169,80 @@ same seed that produced the notes. So a new progression arrives in a new
 harmony, a new melody arrives in a new voice — and typing an old seed back in
 brings its instrument back with it. Pin one from the list if you want to keep
 it while you roll everything else.
+
+### The voice
+
+Tick **Sing the words on the melody** in the **Voice** box and the two halves of
+the app meet: the lines from the Words tab are sung by the tune from this one.
+
+There is no speech engine behind this and nothing is downloaded. A vowel is
+three resonances of the throat — park bandpass filters at 270, 2290 and 3010 Hz,
+buzz a sawtooth through them, and a listener hears "ee"; move them to 730, 1090
+and 2440 and the same buzz says "ah". So the whole singer is a table of numbers
+in `src/music/phonemes.js` and about two hundred lines of Web Audio. Consonants
+are the same filters plus a band of noise: a hiss for *s* and *f*, a moment of
+silence and then a click for *t* and *k*, the nose for *m* and *n*.
+
+Getting from letters to those sounds is done by ordered rewrite rules — try the
+longest spelling first, fall back to single letters, and check the letters
+either side, which is how *c* knows to be an /s/ in *city* and a /k/ in *cat*.
+English spelling being what it is, the hundred-odd words that break every rule
+are simply listed. Dutch is close enough to regular that the rules do nearly all
+of it; the one thing they have to know is that a vowel is long in an open
+syllable and short in a closed one, so *maken* and *makken* come out different.
+Switch the word bank to Dutch and the singer switches with it.
+
+Three ways to hear it, in **Through**:
+
+| | |
+| --- | --- |
+| **Sung** | The synthesiser on its own. A voice made of three bandpass filters. |
+| **Vocoder** | A real fourteen-band channel vocoder: the synthesised speech is split into bands, each band's energy is measured, and those measurements open the same bands of a sawtooth playing the melody. The robot choir. |
+| **Talk box** | The same vocoder with the melody's own instrument as the carrier, which is what a tube in the corner of your mouth does to a guitar amp. |
+
+The vocoder is the real thing rather than an imitation of one, and it needs no
+script processor to be it: an envelope follower is a rectifier and a lowpass,
+and in Web Audio an envelope is an audio signal, so it can be connected straight
+to a gain's `gain`. Sibilance is let past the bank rather than reconstructed
+through it, because a vocoder asked to rebuild an *s* out of a sawtooth gives
+you a whistle.
+
+Six singers — alto, soprano, tenor, bass, a small voice, and breath — which are
+mostly one number each: how long the throat is, and so how far up or down all
+the formants move together. The android has no vibrato and no drift.
+
+#### How the words land on the notes
+
+Setting a lyric is the oldest job in songwriting and mostly a matter of counting,
+so the machine does it the way a person does:
+
+- **Phrases come from the rests.** Wherever the tune stops for a beat or more,
+  that is a breath, and a line of words goes between two breaths. A melody with
+  room in it sings better than one with none.
+- **More notes than syllables** and a vowel is held across several of them — a
+  melisma, the reason *Gloria* can last eight bars. Which syllable gets it is
+  not random: it goes to the end of a word, and preferentially to the end of the
+  line. *Held vowels* is how willing it is. A held note slides onto its next
+  pitch rather than restriking the word.
+- **More syllables than notes** and the long notes are divided until the words
+  fit — never below one step, because two syllables on a semiquaver is a
+  stutter.
+- **Still too many** and the rest of the line moves on to the next phrase rather
+  than being thrown away. The readout under the box says so.
+
+The syllables are drawn on the piano roll over the notes they are sung on, with
+a ‿ on the notes that are only holding the vowel before them — so it reads like
+a lead sheet, and you can see a line that scans badly before you hear it.
+
+The words are taken live from the Words tab, so rerolling the lyrics re-sings
+the tune; pick **The Keepers** or type your own instead. Saving a section
+freezes the lines into it, so a section still sings its verse after the Words
+tab has moved on. **🎼 Compose a song** deals the lyric out across the sections
+it writes: each idea starts further down the lyric than the one before it, and a
+song longer than the lyric comes round again — which is what a chorus is.
+
+The voice is a part of its own in the transport, so you can hear it without the
+lead synth doubling it, or vice versa.
 
 ## Song
 
@@ -536,12 +611,14 @@ change tempo or time signature writes those changes onto the tempo track as
 well, so a DAW draws the bar lines where you heard them. Each instrument carries
 a General MIDI program number, so the file opens on roughly the patch you were
 hearing; a song whose sections change voice writes a program change at each
-join.
+join. A sung melody carries its words out too, as the lyric meta events a
+karaoke player and every serious DAW read — one syllable on the note it starts
+on, and nothing on the notes it is held over.
 
 ## Development
 
 ```sh
-npm test                        # 160 unit tests, no dependencies
+npm test                        # 190 unit tests, no dependencies
 npm start                       # serve the app
 npm run taste                   # serve it, recording judgements to data/taste.jsonl
 npm run train                   # fit models/taste.json from data/taste.jsonl
@@ -566,6 +643,8 @@ src/
     humanize.js     the seeded timing deviations that stop it sounding perfect
     tuning.js       temperaments, microtonal divisions, and instrument detune
     instruments.js  synth recipes for lead, harmony, bass and the drum kits
+    phonemes.js     spelling to sounds, and what each sound's formants are
+    vocal.js        setting a lyric to a tune, and timing the sounds in a note
     sections.js     saved sections and the running order built from them
     compose.js      writes a whole song: shape, contrast, variation, bookends
     arrange.js      lays the parts out over the loop, or sections end to end
@@ -596,7 +675,9 @@ test/               node:test suites
 Adding a language means adding it to `tools/build-wordlists.mjs` (the upstream
 corpus covers dozens), writing an imagery bank and glue words for it in
 `src/words.js` and `src/cutup.js`, and adding an `<option>` to the language
-select.
+select. To have it *sung* as well, add a rule table and a list of exceptions to
+`src/music/phonemes.js` — the phones themselves are shared, so a new language is
+spellings, not sounds.
 
 ## Credits
 

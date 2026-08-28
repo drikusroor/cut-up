@@ -335,6 +335,8 @@ export function initSong(ctx, panels) {
       // fresh checkout this line changes precisely nothing.
       taste: ctx.taste?.(),
       tasteStrength: state.tasteStrength ?? 1,
+      // And it sings, if the Voice box is on — a share of the lyric per idea.
+      vocal: state.music.vocal,
     });
 
     if (ui.replace.checked) {

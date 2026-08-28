@@ -13,6 +13,7 @@ import { buildSongPlan, clockTime, planSeconds } from './music/sections.js';
 import { emptyMelodyEdits } from './music/melody.js';
 import { AUTO, resolveInstruments } from './music/instruments.js';
 import { defaultComposeSettings, normalizeComposeSettings } from './music/compose.js';
+import { defaultVocal, normalizeVocal, singMelody } from './music/vocal.js';
 import { DEFAULT_METER, meterInfo, normalizeMeter } from './music/meter.js';
 import { defaultHumanize, normalizeHumanize } from './music/humanize.js';
 import { defaultTuning, normalizeTuning } from './music/tuning.js';
@@ -31,7 +32,7 @@ function defaultState() {
     feel: defaultHumanize(),
     tuning: defaultTuning(),
     parts: {
-      chords: true, melody: true, bass: true, drums: true,
+      chords: true, melody: true, bass: true, drums: true, vocal: true,
     },
     words: {
       lang: 'en',
@@ -92,6 +93,8 @@ function defaultState() {
       bassMotion: 0.5,
       bassCounter: 0.5,
       bassOctave: 2,
+      // The words, sung on the melody — see music/vocal.js.
+      vocal: defaultVocal(),
       // 'auto' means "whatever the seed says", so a new roll is a new sound.
       leadInstrument: AUTO,
       harmonyInstrument: AUTO,
@@ -130,7 +133,11 @@ function loadState() {
       ...stored,
       parts: { ...base.parts, ...(stored.parts || {}) },
       words: { ...base.words, ...(stored.words || {}) },
-      music: { ...base.music, ...(stored.music || {}) },
+      music: {
+        ...base.music,
+        ...(stored.music || {}),
+        vocal: normalizeVocal(stored.music?.vocal || base.music.vocal),
+      },
       rhythm: { ...base.rhythm, ...(stored.rhythm || {}) },
       meter: normalizeMeter(stored.meter || base.meter),
       feel: normalizeHumanize(stored.feel || base.feel),
@@ -198,6 +205,9 @@ const chordsPanel = initChords(ctx);
 // It has to be hooked up before the Rhythm tab boots, because booting it
 // generates a pattern.
 ctx.onRhythmChange = () => chordsPanel.rebuildBass();
+// New words are new lyrics, if the voice is set to sing whatever the Words tab
+// is showing.
+ctx.onWordsChange = () => chordsPanel.refreshVocal();
 const rhythmPanel = initRhythm(ctx);
 const songPanel = initSong(ctx, { chords: chordsPanel, rhythm: rhythmPanel });
 
@@ -270,7 +280,7 @@ swingInput.addEventListener('change', () => {
   if (audio.playing) startPlayback();
 });
 
-for (const part of ['chords', 'melody', 'bass', 'drums']) {
+for (const part of ['chords', 'melody', 'vocal', 'bass', 'drums']) {
   const box = $(`#part-${part}`);
   box.checked = state.parts[part];
   box.addEventListener('change', () => {
@@ -288,10 +298,14 @@ function buildLoop() {
   const drumSteps = state.rhythm.pattern?.tracks?.[0]?.pattern.length ?? 0;
   const end = (notes) => notes.reduce((max, n) => Math.max(max, n.step + n.length), 0);
   const bass = m.bassOn ? m.bass : [];
+  // The words are laid on the melody at play time rather than kept beside it,
+  // so rerolling the tune, dragging a note or rewriting the lyric all land
+  // without anything needing to be regenerated.
+  const melody = singMelody(m).notes;
   return {
     chordVoicings: m.voicings,
     stepsPerChord: m.stepsPerChord,
-    melody: m.melody,
+    melody,
     bass,
     rhythm: state.rhythm.pattern,
     instruments: resolveInstruments(m, state.rhythm),
@@ -299,7 +313,7 @@ function buildLoop() {
     rootPc: m.rootPc,
     stepsPerBar: bar,
     // Loop over whichever part is longest; the shorter ones repeat to fill it.
-    totalSteps: Math.max(totalChordSteps, drumSteps, end(m.melody), end(bass), bar),
+    totalSteps: Math.max(totalChordSteps, drumSteps, end(melody), end(bass), bar),
   };
 }
 
@@ -337,10 +351,16 @@ function applyParts(song, parts) {
   if (song.sections) {
     return { ...song, sections: song.sections.map((section) => applyParts(section, parts)) };
   }
+  // The melody and the voice share one list of notes, so muting the melody with
+  // the voice still on keeps the notes that have words on them — an export of
+  // that is the sung line, lyrics and all, without the instrumental tune.
+  const melody = parts.melody
+    ? (song.melody || [])
+    : (song.melody || []).filter((note) => parts.vocal !== false && note.syllable);
   return {
     ...song,
     chordVoicings: parts.chords ? (song.chordVoicings || []) : [],
-    melody: parts.melody ? (song.melody || []) : [],
+    melody,
     bass: parts.bass ? (song.bass || []) : [],
     rhythm: parts.drums ? (song.rhythm || null) : null,
   };

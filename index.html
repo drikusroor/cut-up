@@ -277,6 +277,49 @@
       </fieldset>
 
       <fieldset>
+        <legend>Voice</legend>
+        <label class="check"><input type="checkbox" id="vocal-on"> Sing the words on the melody</label>
+        <div id="vocal-controls">
+          <label class="field">
+            <span>Words</span>
+            <select id="vocal-source"></select>
+          </label>
+          <label class="field" id="vocal-text-wrap" hidden>
+            <span>Your words</span>
+            <textarea id="vocal-text" rows="4" placeholder="One line per phrase.&#10;The tune's rests decide where a line ends."></textarea>
+          </label>
+          <div class="field">
+            <span>Singer</span>
+            <div class="row">
+              <select id="vocal-voice" class="grow"></select>
+              <button type="button" class="btn ghost" id="hear-voice" title="Hear it">▶</button>
+            </div>
+            <small id="vocal-voice-hint" class="hint"></small>
+          </div>
+          <label class="field">
+            <span>Through</span>
+            <select id="vocal-mode"></select>
+            <small id="vocal-mode-hint" class="hint"></small>
+          </label>
+          <label class="field slider">
+            <span>Held vowels <output id="out-vocal-melisma"></output></span>
+            <input type="range" id="vocal-melisma" min="0" max="1" step="0.05" value="0.4">
+          </label>
+          <label class="field slider">
+            <span>Level <output id="out-vocal-level"></output></span>
+            <input type="range" id="vocal-level" min="0" max="1" step="0.05" value="0.8">
+          </label>
+          <p class="hint" id="vocal-readout"></p>
+          <small class="hint">
+            The words are sounded out from their spelling and sung through three bandpass filters,
+            which is what a vowel is. <em>Vocoder</em> and <em>talk box</em> run that speech through a
+            real fourteen-band vocoder with the melody as its carrier. Lines land between the rests
+            in the tune, so a melody with room to breathe sings better than one with none.
+          </small>
+        </div>
+      </fieldset>
+
+      <fieldset>
         <legend>Seeds</legend>
         <div class="field">
           <span>Progression</span>
@@ -529,6 +572,7 @@
   <div class="parts">
     <label class="check"><input type="checkbox" id="part-chords" checked> Chords</label>
     <label class="check"><input type="checkbox" id="part-melody" checked> Melody</label>
+    <label class="check"><input type="checkbox" id="part-vocal" checked> Voice</label>
     <label class="check"><input type="checkbox" id="part-bass" checked> Bass</label>
     <label class="check"><input type="checkbox" id="part-drums" checked> Drums</label>
   </div>
