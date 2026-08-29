@@ -7,6 +7,7 @@ import { initRhythm } from './ui/rhythm-panel.js';
 import { initSong } from './ui/song-panel.js';
 import { initFeel } from './ui/feel-panel.js';
 import { initTrain } from './ui/train-panel.js';
+import { initExportAudio } from './ui/export-panel.js';
 import { AudioEngine } from './music/audio.js';
 import { songToMidi } from './music/midi.js';
 import { buildSongPlan, clockTime, planSeconds } from './music/sections.js';
@@ -225,6 +226,9 @@ const feelPanel = initFeel(ctx);
 // on the shelf, and composing asks it for the model.
 const trainPanel = initTrain(ctx);
 ctx.taste = () => trainPanel.model();
+// The export dialog is shared: the transport, the Song tab and every card on
+// the shelf open the same one.
+const exportPanel = initExportAudio(ctx);
 // The key lives in the Chords tab but the temperament readout is in the
 // transport, so the two have to be introduced.
 ctx.onKeyChange = () => {
@@ -325,11 +329,28 @@ function buildArrangedSong() {
 }
 
 /**
- * Whichever of the two the Song tab is asking for. The transport follows the
- * tab you are on, so play means the same thing as whatever is in front of you.
+ * One saved section on its own, played the way the song would play it — same
+ * arranger, same voices, same bar — so exporting a section gives you the thing
+ * you heard on the shelf rather than a near miss.
  */
-function buildSong({ scope = state.tab === 'song' ? 'song' : 'loop', startStep } = {}) {
-  const song = (scope === 'song' && buildArrangedSong()) || buildLoop();
+function buildSectionSong(section) {
+  if (!section) return null;
+  const plan = buildSongPlan([section], [{ sectionId: section.id, repeats: 1 }]);
+  if (!plan.blocks.length) return null;
+  return { sections: plan.blocks.map((block) => block.song), totalSteps: plan.totalSteps };
+}
+
+/**
+ * Whichever of the three is being asked for: the arrangement, one section, or
+ * the loop. The transport follows the tab you are on, so play means the same
+ * thing as whatever is in front of you; only an export names a section.
+ */
+function buildSong({
+  scope = state.tab === 'song' ? 'song' : 'loop', section = null, startStep,
+} = {}) {
+  const song = (scope === 'section' && buildSectionSong(section))
+    || (scope === 'song' && buildArrangedSong())
+    || buildLoop();
   return {
     ...song,
     tempo: state.tempo,
@@ -389,6 +410,49 @@ function exportMidi(options) {
   if (!hasAudibleContent(song)) return toast('Nothing to export yet');
   const name = scope === 'song' ? 'song' : (state.music.chordSeed || 'idea');
   download(`cut-up-${name}.mid`, songToMidi(song), 'audio/midi');
+  return undefined;
+}
+
+/** A file name that will survive a file system: "Section A" becomes "section-a". */
+function slug(text, fallback) {
+  const cleaned = String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return cleaned || fallback;
+}
+
+/**
+ * Opens the audio export dialog on whatever is being asked for: the whole
+ * arrangement, one saved section, or the loop in front of you.
+ *
+ * Muted parts are left out, exactly as they are left out of the MIDI — what
+ * you are exporting is what you have been listening to.
+ */
+function exportAudio(options) {
+  const scope = options?.scope || (state.tab === 'song' ? 'song' : 'loop');
+  const section = options?.section || null;
+  const song = applyParts({ ...buildSong({ scope, section }), loop: false }, state.parts);
+  if (!hasAudibleContent(song)) return toast('Nothing to export yet');
+
+  const names = {
+    song: 'song',
+    section: slug(section?.name, 'section'),
+    loop: slug(state.music.chordSeed, 'idea'),
+  };
+  const labels = {
+    song: 'The song, as arranged.',
+    section: `Section ${section?.name || ''}, on its own.`,
+    loop: 'The loop you have open, on repeat for as long as you ask.',
+  };
+  const muted = Object.entries(state.parts).filter(([, on]) => !on).map(([part]) => part);
+  const list = muted.length > 1
+    ? `${muted.slice(0, -1).join(', ')} and ${muted[muted.length - 1]}`
+    : muted[0];
+  exportPanel.open({
+    song,
+    name: `cut-up-${names[scope] || 'export'}`,
+    label: labels[scope]
+      + (muted.length ? ` The ${list} you have muted ${muted.length > 1 ? 'are' : 'is'} left out.` : ''),
+    loop: scope !== 'song',
+  });
   return undefined;
 }
 
@@ -476,6 +540,8 @@ ctx.playCards = (sections, { tempo, meter } = {}) => {
 /** The Train tab keeping a hand adds sections the Song tab has not drawn yet. */
 ctx.refreshSections = () => songPanel.render();
 ctx.exportSong = () => exportMidi({ scope: 'song' });
+ctx.exportSongAudio = () => exportAudio({ scope: 'song' });
+ctx.exportSectionAudio = (section) => exportAudio({ scope: 'section', section });
 ctx.onSongChange = () => {
   renderPlayScope();
   if (audio.playing && playbackScope === 'song') startPlayback({ scope: 'song' });
@@ -484,6 +550,7 @@ ctx.onSongChange = () => {
 $('#play').addEventListener('click', () => startPlayback());
 $('#stop').addEventListener('click', () => audio.stop());
 $('#export-midi').addEventListener('click', () => exportMidi());
+$('#export-audio').addEventListener('click', () => exportAudio());
 
 // Space bar toggles playback, except while typing.
 document.addEventListener('keydown', (event) => {

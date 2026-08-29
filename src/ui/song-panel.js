@@ -54,6 +54,7 @@ export function initSong(ctx, panels) {
     forkSection: $('#fork-section'),
     playSong: $('#play-song'),
     exportSong: $('#export-song-midi'),
+    exportSongAudio: $('#export-song-audio'),
     prevSection: $('#prev-section'),
     nextSection: $('#next-section'),
     autofill: $('#autofill-song'),
@@ -431,6 +432,12 @@ export function initSong(ctx, panels) {
           }, ['Fork']),
           el('button', {
             type: 'button',
+            class: 'btn ghost',
+            title: 'Render this section on its own as an audio file',
+            onclick: () => ctx.exportSectionAudio?.(section),
+          }, ['⤓ Audio']),
+          el('button', {
+            type: 'button',
             class: 'btn ghost danger',
             title: 'Delete this section',
             onclick: () => removeSection(section),
@@ -575,6 +582,7 @@ export function initSong(ctx, panels) {
   });
   ui.playSong.addEventListener('click', () => ctx.playSong());
   ui.exportSong.addEventListener('click', () => ctx.exportSong());
+  ui.exportSongAudio.addEventListener('click', () => ctx.exportSongAudio());
   ui.prevSection.addEventListener('click', () => ctx.skipSection(-1));
   ui.nextSection.addEventListener('click', () => ctx.skipSection(1));
 
