@@ -77,6 +77,8 @@ export function initSong(ctx, panels) {
     tempoShifts: $('#compose-tempo-shifts'),
     pickTempo: $('#compose-pick-tempo'),
     composeSeed: $('#compose-seed'),
+    sing: $('#compose-sing'),
+    singHint: $('#compose-sing-hint'),
     newComposeSeed: $('#new-compose-seed'),
     replace: $('#compose-replace'),
     composeSummary: $('#compose-summary'),
@@ -315,6 +317,29 @@ export function initSong(ctx, panels) {
     ui.composeSeed.value = settings.seed;
     for (const slider of [ui.contrast, ui.variation]) slider.dispatchEvent(new Event('input'));
     syncForms();
+    syncSing();
+  }
+
+  /**
+   * The Voice box lives on the Chords tab, next to the melody it sings and the
+   * piano roll that shows the words on it — but composing happens here, and a
+   * switch you cannot see is a feature you do not know about. So this is the
+   * same switch, shown where it is needed, and it says what it is going to do.
+   */
+  function syncSing() {
+    const vocal = state.music.vocal || {};
+    ui.sing.checked = Boolean(vocal.on);
+    const lines = (vocal.lines || []).filter(Boolean).length;
+    if (!vocal.on) {
+      ui.singHint.textContent = 'Off — it writes an instrumental. '
+        + 'The singer, the words and the vocoder are on the Chords tab.';
+    } else if (!lines) {
+      ui.singHint.textContent = 'On, but there are no words yet — '
+        + 'cut some up on the Words tab first.';
+    } else {
+      ui.singHint.textContent = `Each idea gets its own share of the ${lines} `
+        + `line${lines === 1 ? '' : 's'} you have, and the words are frozen into it.`;
+    }
   }
 
   /**
@@ -586,11 +611,22 @@ export function initSong(ctx, panels) {
   ui.prevSection.addEventListener('click', () => ctx.skipSection(-1));
   ui.nextSection.addEventListener('click', () => ctx.skipSection(1));
 
+  ui.sing.addEventListener('change', () => {
+    state.music.vocal = { ...state.music.vocal, on: ui.sing.checked };
+    syncSing();
+    save();
+    // The Chords tab owns this control; it has to be told its own box moved.
+    ctx.onVocalChange?.();
+    ctx.refreshPlayback?.();
+  });
+
   writeCompose();
   render();
 
   return {
     render,
+    /** The Chords tab's Voice box changed; this tab shows the same switch. */
+    syncSing,
     plan: () => buildSongPlan(state.sections, state.arrangement),
     highlight(step) {
       const plan = buildSongPlan(state.sections, state.arrangement);

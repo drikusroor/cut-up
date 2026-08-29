@@ -235,11 +235,18 @@ a ‿ on the notes that are only holding the vowel before them — so it reads l
 a lead sheet, and you can see a line that scans badly before you hear it.
 
 The words are taken live from the Words tab, so rerolling the lyrics re-sings
-the tune; pick **The Keepers** or type your own instead. Saving a section
-freezes the lines into it, so a section still sings its verse after the Words
-tab has moved on. **🎼 Compose a song** deals the lyric out across the sections
-it writes: each idea starts further down the lyric than the one before it, and a
-song longer than the lyric comes round again — which is what a chorus is.
+the tune; pick **The Keepers** or type your own instead.
+
+The switch is global, the way tempo and tuning are: turn it on and everything
+sings, the song already in the drawer included. Each idea gets its own share of
+the lyric — the first starts at the first line, the next further down, and a
+song longer than its lyric comes round again, which is what a chorus is. The
+same switch appears in the composer on the Song tab, because that is where you
+are when you want it.
+
+Saving a section *while it is singing* freezes those words into it, so it goes
+on singing that verse after the Words tab has moved on. A section that was not
+saved singing has no opinion, and follows the switch.
 
 The voice is a part of its own in the transport, so you can hear it without the
 lead synth doubling it, or vice versa.
@@ -659,7 +666,7 @@ is not one worth handing to anybody.
 ## Development
 
 ```sh
-npm test                        # 207 unit tests, no dependencies
+npm test                        # 211 unit tests, no dependencies
 npm start                       # serve the app
 npm run taste                   # serve it, recording judgements to data/taste.jsonl
 npm run train                   # fit models/taste.json from data/taste.jsonl

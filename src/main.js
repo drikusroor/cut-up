@@ -212,6 +212,13 @@ ctx.onWordsChange = () => chordsPanel.refreshVocal();
 const rhythmPanel = initRhythm(ctx);
 const songPanel = initSong(ctx, { chords: chordsPanel, rhythm: rhythmPanel });
 
+// The Voice box is on the Chords tab and mirrored in the composer on the Song
+// tab. Whichever one is thrown, both are told to read the state again.
+ctx.onVocalChange = () => {
+  chordsPanel.applyVocal();
+  songPanel.syncSing();
+};
+
 // A bar of a different length is a different grid: the drum pattern is re-laid
 // on it, and the chords, melody and bass are re-cut to the new bar. Same seeds,
 // so it is the same idea counted differently rather than a new one.
@@ -323,7 +330,9 @@ function buildLoop() {
 
 /** The whole arrangement, section by section — null when there isn't one. */
 function buildArrangedSong() {
-  const plan = buildSongPlan(state.sections, state.arrangement);
+  // The Voice box is the fallback for sections that were not saved singing —
+  // so turning it on makes the song you already have sing.
+  const plan = buildSongPlan(state.sections, state.arrangement, { vocal: state.music.vocal });
   if (!plan.blocks.length) return null;
   return { sections: plan.blocks.map((block) => block.song), totalSteps: plan.totalSteps };
 }
@@ -335,7 +344,9 @@ function buildArrangedSong() {
  */
 function buildSectionSong(section) {
   if (!section) return null;
-  const plan = buildSongPlan([section], [{ sectionId: section.id, repeats: 1 }]);
+  const plan = buildSongPlan([section], [{ sectionId: section.id, repeats: 1 }], {
+    vocal: state.music.vocal,
+  });
   if (!plan.blocks.length) return null;
   return { sections: plan.blocks.map((block) => block.song), totalSteps: plan.totalSteps };
 }

@@ -8,7 +8,7 @@
 
 import { naturalSteps } from './arrange.js';
 import { resolveInstruments } from './instruments.js';
-import { singMelody } from './vocal.js';
+import { dealLyric, singMelody } from './vocal.js';
 import { stepsPerBar } from './meter.js';
 
 export const SECTION_KINDS = [
@@ -94,16 +94,29 @@ export function forkSection(section, sections) {
   };
 }
 
-/** The playable song hidden inside a section. */
-export function sectionSong(section) {
+/**
+ * The playable song hidden inside a section.
+ *
+ * `vocal` is the voice the transport is set to, and it is a *fallback*: a
+ * section that was saved singing keeps the words it was saved with, so
+ * rerolling the lyric never rewrites a song you had already put away. One that
+ * was not — saved before there was a voice, or composed with it switched off —
+ * follows whatever the Voice box says now, which is what makes turning the
+ * voice on make the song you already have sing.
+ *
+ * @param {object} section
+ * @param {{vocal?: object|null}} [opts]
+ */
+export function sectionSong(section, { vocal = null } = {}) {
   const music = section?.music || {};
+  const singing = music.vocal?.on ? music : { ...music, vocal };
   return {
     chordVoicings: music.voicings || [],
     stepsPerChord: music.stepsPerChord || 16,
     // The words are set on the melody here rather than stored beside it, so a
     // section that has had its tune redrawn is re-sung against the new notes
     // and never plays a syllable that belonged to a note that has gone.
-    melody: singMelody(music).notes,
+    melody: singMelody(singing).notes,
     // The bass is optional, and a section saved before it existed has none.
     bass: music.bassOn === false ? [] : (music.bass || []),
     rhythm: section?.rhythm?.pattern || null,
@@ -138,18 +151,34 @@ export function sectionSteps(section) {
  * fades out at the end of the song is the same chorus that came in at full
  * volume four minutes earlier.
  *
+ * `vocal` is the voice to fall back on for sections that do not carry one of
+ * their own — see sectionSong. It is dealt out across them the way the composer
+ * deals it out across the sections it writes, so a song told to sing after the
+ * fact sings a different verse in each part rather than the same one five
+ * times.
+ *
  * @param {object[]} sections the library
  * @param {Array<{sectionId: string, repeats?: number, fade?: boolean|object}>} arrangement
+ * @param {{vocal?: object|null}} [opts]
  */
-export function buildSongPlan(sections = [], arrangement = []) {
+export function buildSongPlan(sections = [], arrangement = [], { vocal = null } = {}) {
   const byId = new Map(sections.map((s) => [s.id, s]));
   const blocks = [];
   let step = 0;
+
+  // Which idea each section is, counted in the order they are first heard.
+  const order = new Map();
+  for (const item of arrangement) {
+    if (byId.has(item?.sectionId) && !order.has(item.sectionId)) order.set(item.sectionId, order.size);
+  }
 
   for (const item of arrangement) {
     const section = byId.get(item?.sectionId);
     // An entry whose section has been deleted is skipped rather than fatal.
     if (!section) continue;
+    const share = vocal?.on
+      ? dealLyric(vocal, order.get(section.id) ?? 0, order.size)
+      : vocal;
     const repeats = Math.max(1, Math.round(item.repeats || 1));
     const steps = sectionSteps(section);
     blocks.push({
@@ -165,7 +194,10 @@ export function buildSongPlan(sections = [], arrangement = []) {
       // Pinning totalSteps keeps a block the same length even when a part is
       // muted, so muting the melody never shortens the section under it.
       song: {
-        ...sectionSong(section), totalSteps: steps, repeats, fade: item.fade || null,
+        ...sectionSong(section, { vocal: share }),
+        totalSteps: steps,
+        repeats,
+        fade: item.fade || null,
       },
     });
     step += steps * repeats;

@@ -1002,6 +1002,8 @@ export function initChords(ctx) {
       syncVocal();
       renderRoll();
       save();
+      // The Song tab shows the same switch, so it has to be told.
+      ctx.onVocalChange?.();
       ctx.refreshPlayback?.();
     });
   }
@@ -1091,6 +1093,19 @@ export function initChords(ctx) {
       const edits = melodyEditCount(m.melodyEdits);
       generateMelodyLine({ newSeed: false });
       if (edits) toast(`Recounted in ${grid().label} — the melody was rewritten to the new bar`);
+    },
+    /**
+     * The switch was thrown from the Song tab. Nothing is regenerated — the
+     * controls are simply told what the state now says.
+     */
+    applyVocal() {
+      ui.vocalOn.checked = Boolean(m.vocal.on);
+      ui.vocalSource.value = m.vocal.source;
+      ui.vocalText.value = m.vocal.text;
+      ui.vocalVoice.value = m.vocal.voice;
+      ui.vocalMode.value = m.vocal.mode;
+      syncVocal();
+      renderRoll();
     },
     /** New melody over the same chords — what forking a variation does. */
     rerollMelody: () => generateMelodyLine({ newSeed: true }),

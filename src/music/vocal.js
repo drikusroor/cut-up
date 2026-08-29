@@ -153,6 +153,31 @@ export function normalizeVocal(vocal) {
   };
 }
 
+/** The same lines, starting from a different one. */
+export function rotateLines(lines = [], by = 0) {
+  if (!lines.length) return [];
+  const at = ((Math.round(by) % lines.length) + lines.length) % lines.length;
+  return [...lines.slice(at), ...lines.slice(0, at)];
+}
+
+/**
+ * One idea's share of a lyric.
+ *
+ * A song does not sing the same line in the verse and the chorus, so each idea
+ * starts further down the words than the one before it — and, because setting
+ * wraps round when it runs out, a song longer than its lyric comes back to the
+ * top, which is what a chorus is.
+ *
+ * @param {object} vocal
+ * @param {number} index which idea this is
+ * @param {number} total how many there are
+ */
+export function dealLyric(vocal, index, total) {
+  if (!vocal?.lines?.length) return vocal;
+  const chunk = Math.max(1, Math.ceil(vocal.lines.length / Math.max(1, total)));
+  return { ...vocal, lines: rotateLines(vocal.lines, index * chunk) };
+}
+
 /**
  * A melody with the words on it, ready to be played or exported.
  *

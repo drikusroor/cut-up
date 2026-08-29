@@ -14,6 +14,7 @@ import {
   wordSyllables,
 } from '../src/music/phonemes.js';
 import {
+  dealLyric,
   defaultVocal,
   normalizeVocal,
   phoneSchedule,
@@ -29,7 +30,7 @@ import {
 } from '../src/music/vocal.js';
 import { songToMidi } from '../src/music/midi.js';
 import { AudioEngine } from '../src/music/audio.js';
-import { sectionSong } from '../src/music/sections.js';
+import { buildSongPlan, sectionSong } from '../src/music/sections.js';
 
 // --- sounding words out -----------------------------------------------------
 
@@ -542,4 +543,84 @@ test('a composed song deals the lyric out across its sections', async () => {
   // Composed with the voice off, nothing sings.
   const silent = composeSong({ settings: { seed: 'sung-song', minutes: 1.5, letters: 3 }, tempo: 100 });
   assert.ok(silent.sections.every((s) => !s.music.vocal));
+});
+
+// --- turning the voice on after the fact ------------------------------------
+
+test('a lyric is dealt out so each idea starts somewhere else in it', () => {
+  const vocal = { on: true, lines: ['one', 'two', 'three', 'four'] };
+  assert.equal(dealLyric(vocal, 0, 4).lines[0], 'one');
+  assert.equal(dealLyric(vocal, 1, 4).lines[0], 'two');
+  assert.equal(dealLyric(vocal, 3, 4).lines[0], 'four');
+  // More ideas than lines simply comes round again.
+  assert.equal(dealLyric(vocal, 5, 8).lines[0], 'two');
+  // Every share is the whole lyric, so nothing runs out of words.
+  for (let i = 0; i < 6; i++) {
+    assert.deepEqual([...dealLyric(vocal, i, 4).lines].sort(), [...vocal.lines].sort());
+  }
+  // Fewer lines than ideas: they are shared out rather than one each.
+  assert.equal(dealLyric({ on: true, lines: ['a', 'b'] }, 2, 4).lines[0], 'a');
+  assert.deepEqual(dealLyric({ on: true, lines: [] }, 1, 2).lines, []);
+});
+
+/** A section with a tune in it and, optionally, words of its own. */
+function saved(id, vocal) {
+  return {
+    id,
+    name: id,
+    music: {
+      voicings: [[60, 64, 67]],
+      stepsPerChord: 16,
+      melody: run(6),
+      ...(vocal ? { vocal } : {}),
+    },
+    rhythm: {},
+  };
+}
+
+test('a section with no words of its own follows the Voice box', () => {
+  const section = saved('a');
+  const vocal = { on: true, lines: ['Ash and iron'], voice: 'bass', mode: 'vocoder' };
+  // Silent on its own — this is the song you composed before turning it on.
+  assert.equal(sectionSong(section).melody.filter((n) => n.syllable).length, 0);
+  // And singing the moment the transport has a voice to lend it.
+  const sung = sectionSong(section, { vocal }).melody.filter((n) => n.syllable);
+  assert.ok(sung.length > 0);
+  assert.equal(sung[0].vocal.mode, 'vocoder');
+  // The voice switched off lends nothing.
+  assert.equal(
+    sectionSong(section, { vocal: { ...vocal, on: false } }).melody.filter((n) => n.syllable).length,
+    0,
+  );
+});
+
+test('a section saved singing keeps its own words', () => {
+  const own = { on: true, lines: ['Salt on the wire'], voice: 'tenor', mode: 'sung' };
+  const other = { on: true, lines: ['Rust and kerosene'], voice: 'bass', mode: 'vocoder' };
+  const sung = sectionSong(saved('a', own), { vocal: other }).melody.filter((n) => n.syllable);
+  assert.equal(sung[0].syllable.word, 'Salt');
+  assert.equal(sung[0].vocal.voice, 'tenor', 'and its own singer with them');
+});
+
+test('turning the voice on sings the song you already have, a verse per part', () => {
+  const sections = [saved('a'), saved('b'), saved('c')];
+  const arrangement = [
+    { sectionId: 'a', repeats: 1 }, { sectionId: 'b', repeats: 1 },
+    { sectionId: 'c', repeats: 1 }, { sectionId: 'a', repeats: 1 },
+  ];
+  const vocal = { on: true, lines: ['Ash and iron', 'Cold rain falling', 'The harbour burns'] };
+
+  const silent = buildSongPlan(sections, arrangement);
+  assert.ok(silent.blocks.every((b) => b.song.melody.every((n) => !n.syllable)));
+
+  const plan = buildSongPlan(sections, arrangement, { vocal });
+  const opening = plan.blocks.map((b) => b.song.melody.find((n) => n.syllable)?.syllable.word);
+  assert.ok(opening.every(Boolean), 'every part sings');
+  // Three distinct ideas, three different verses — and the repeat of A sings
+  // what A sang, because it is the same section.
+  assert.equal(new Set(opening.slice(0, 3)).size, 3);
+  assert.equal(opening[3], opening[0]);
+  // Lending a voice does not stretch the song.
+  assert.equal(plan.totalSteps, silent.totalSteps);
+  assert.deepEqual(plan.blocks.map((b) => b.steps), silent.blocks.map((b) => b.steps));
 });
