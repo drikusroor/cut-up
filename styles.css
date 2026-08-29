@@ -377,6 +377,32 @@ details[open] summary { margin-bottom: 0.5rem; }
 }
 .section-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
 .section-actions .btn { padding: 0.25rem 0.5rem; font-size: 0.78rem; }
+
+/* A button with two halves: the whole job on the left, the choice of job on
+   the right. They read as one control, so they are drawn as one. */
+.split-btn { display: inline-flex; }
+.split-btn .btn { border-radius: 0; }
+.split-btn .split-main { border-top-left-radius: var(--radius); border-bottom-left-radius: var(--radius); }
+.split-btn .split-more {
+  border-top-right-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+  border-left-width: 0;
+  padding-left: 0.35rem;
+  padding-right: 0.35rem;
+}
+.split-btn .split-more::before {
+  content: "";
+  display: block;
+  position: absolute;
+  inset: 0.25rem auto 0.25rem 0;
+  border-left: 1px solid var(--line);
+}
+.split-btn .split-more { position: relative; }
+
+/* One row per aspect in the regenerate dialog: the tick, and what it costs. */
+.regen-aspects { display: grid; gap: 0.4rem; margin-bottom: 0.9rem; }
+.regen-aspect { display: grid; gap: 0.1rem; }
+.regen-aspect .hint { margin: 0 0 0 1.5rem; }
 .btn.danger:hover { color: #ff8b73; }
 
 fieldset.composer { border-color: var(--accent-soft); }

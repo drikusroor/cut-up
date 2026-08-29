@@ -764,6 +764,40 @@
   </div>
 </section>
 
+<dialog class="sheet" id="regenerate-dialog" aria-labelledby="regenerate-title">
+  <h2 id="regenerate-title">Roll it again</h2>
+  <p class="hint" id="regen-scope"></p>
+
+  <h3 class="section-label">What to roll</h3>
+  <div class="regen-aspects" id="regen-aspects"></div>
+
+  <h3 class="section-label">Key</h3>
+  <div class="row">
+    <label class="field grow"><span>Tonic</span><select id="regen-root"></select></label>
+    <label class="field grow"><span>Mode</span><select id="regen-scale"></select></label>
+  </div>
+  <small class="hint" id="regen-key-hint"></small>
+
+  <h3 class="section-label">Seed</h3>
+  <div class="row">
+    <input type="text" id="regen-seed" class="grow" placeholder="Empty means surprise me" aria-label="Regeneration seed">
+    <button type="button" class="btn ghost" id="regen-new-seed" title="A different roll">🎲</button>
+  </div>
+  <small class="hint">
+    With a seed written in, the same section rolled again with the same seed comes out the same
+    way twice — so a take you liked can be got back after you have rolled past it.
+  </small>
+
+  <label class="check"><input type="checkbox" id="regen-fork"> Leave the original alone and file the result as a new section</label>
+
+  <small class="hint" id="regen-summary"></small>
+
+  <div class="row end">
+    <button type="button" class="btn ghost" id="regen-close">Close</button>
+    <button type="button" class="btn primary" id="regen-go">↻ Regenerate</button>
+  </div>
+</dialog>
+
 <dialog class="sheet" id="export-audio-dialog" aria-labelledby="export-audio-title">
   <h2 id="export-audio-title">Export audio</h2>
   <p class="hint" id="export-audio-scope"></p>

@@ -23,6 +23,8 @@ import {
   LETTER_RANGE,
   normalizeComposeSettings,
 } from '../music/compose.js';
+import { allAspects, describeAspects, regenerateSection } from '../music/regenerate.js';
+import { initRegenerateDialog } from './regenerate-dialog.js';
 import { randomSeed } from '../rng.js';
 import { chordSymbol, keyLabel, keyUsesFlats } from '../music/theory.js';
 import { meterInfo, meterLabel } from '../music/meter.js';
@@ -202,6 +204,44 @@ export function initSong(ctx, panels) {
     toast(`Forked ${section.name} → ${copy.name}`);
     return copy;
   }
+
+  /**
+   * Rolls a section again — the button on every card.
+   *
+   * The section keeps its id, so it keeps its place in the running order and
+   * every repeat of it changes together: rolling the chorus rolls all four
+   * choruses, which is what you meant. Asking for a fork instead files the new
+   * take beside the old one, which is what you meant when you were not sure.
+   */
+  function regenerate(section, options = {}) {
+    const { fork: asFork = false, ...rest } = options;
+    const aspects = rest.aspects || allAspects();
+    const rolled = regenerateSection(section, rest);
+
+    if (asFork) {
+      const copy = forkSection(rolled, state.sections);
+      state.sections.push(copy);
+      state.arrangement.push({ sectionId: copy.id, repeats: 1 });
+      render();
+      save();
+      toast(`Rolled ${describeAspects(aspects)} → ${copy.name}`);
+      ctx.refreshPlayback?.();
+      return copy;
+    }
+
+    const index = state.sections.findIndex((s) => s.id === section.id);
+    if (index < 0) return null;
+    state.sections[index] = rolled;
+    // The tabs are showing this section, so they have to be shown the new one.
+    if (state.currentSectionId === rolled.id) loadSection(rolled, { announce: false });
+    render();
+    save();
+    toast(`${rolled.name}: rolled ${describeAspects(aspects)}`);
+    ctx.refreshPlayback?.();
+    return rolled;
+  }
+
+  const regenDialog = initRegenerateDialog((section, options) => regenerate(section, options));
 
   function removeSection(section) {
     state.sections = state.sections.filter((s) => s.id !== section.id);
@@ -455,6 +495,23 @@ export function initSong(ctx, panels) {
           el('button', {
             type: 'button', class: 'btn ghost', title: 'Copy it into a new section', onclick: () => fork(section),
           }, ['Fork']),
+          // Two halves: roll the lot, or say what to roll. The second is the
+          // one you reach for once you like something about what you have.
+          el('div', { class: 'split-btn' }, [
+            el('button', {
+              type: 'button',
+              class: 'btn ghost split-main',
+              title: 'Roll the whole thing again — new chords, tune, bass, drums and voices',
+              onclick: () => regenerate(section, { aspects: allAspects() }),
+            }, ['↻ Regenerate']),
+            el('button', {
+              type: 'button',
+              class: 'btn ghost split-more',
+              title: 'Choose what to roll — and the key to roll it into',
+              'aria-label': `Choose what to regenerate in section ${section.name}`,
+              onclick: () => regenDialog.open(section),
+            }, ['▾']),
+          ]),
           el('button', {
             type: 'button',
             class: 'btn ghost',
