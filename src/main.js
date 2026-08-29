@@ -8,6 +8,7 @@ import { initSong } from './ui/song-panel.js';
 import { initFeel } from './ui/feel-panel.js';
 import { initTrain } from './ui/train-panel.js';
 import { initExportAudio } from './ui/export-panel.js';
+import { initLibrary } from './ui/library-panel.js';
 import { AudioEngine } from './music/audio.js';
 import { songToMidi } from './music/midi.js';
 import { buildSongPlan, clockTime, planSeconds } from './music/sections.js';
@@ -209,7 +210,7 @@ ctx.syncMix();
 
 // --- panels -----------------------------------------------------------------
 
-initWords(ctx);
+const wordsPanel = initWords(ctx);
 const chordsPanel = initChords(ctx);
 // The bass is written against the drums, so a new pattern is a new bass line.
 // It has to be hooked up before the Rhythm tab boots, because booting it
@@ -220,6 +221,23 @@ ctx.onRhythmChange = () => chordsPanel.rebuildBass();
 ctx.onWordsChange = () => chordsPanel.refreshVocal();
 const rhythmPanel = initRhythm(ctx);
 const songPanel = initSong(ctx, { chords: chordsPanel, rhythm: rhythmPanel });
+
+/**
+ * A whole song was poured over the state — opened from the library, or read
+ * out of a file. Nothing is regenerated: every panel is simply told to read
+ * the state it is now sitting on.
+ */
+ctx.applyLoadedSong = () => {
+  chordsPanel.applyState();
+  rhythmPanel.applyState();
+  songPanel.render();
+  ctx.syncInstruments();
+  ctx.syncFeel();
+  ctx.syncMix();
+  ctx.onTransportChange?.();
+  ctx.onVocalChange?.();
+  showTab('song');
+};
 
 // The Voice box is on the Chords tab and mirrored in the composer on the Song
 // tab. Whichever one is thrown, both are told to read the state again.
@@ -239,6 +257,10 @@ ctx.onMeterChange = () => {
 };
 const feelPanel = initFeel(ctx);
 const mixerPanel = initMixer(ctx);
+// The shelf that outlives the tab: saved songs, saved sections, and the files
+// they can be written out as.
+const libraryPanel = initLibrary(ctx, { song: songPanel, words: wordsPanel });
+ctx.library = libraryPanel;
 // The Train tab needs the Song tab to exist first: keeping a hand puts sections
 // on the shelf, and composing asks it for the model.
 const trainPanel = initTrain(ctx);
@@ -269,6 +291,7 @@ function showTab(name) {
   if (name === 'chords') chordsPanel.redraw();
   if (name === 'song') songPanel.render();
   if (name === 'train') trainPanel.refresh();
+  if (name === 'library') ctx.library?.refresh();
   renderPlayScope();
   save();
 }

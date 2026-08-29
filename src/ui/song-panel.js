@@ -59,6 +59,7 @@ export function initSong(ctx, panels) {
     exportSongAudio: $('#export-song-audio'),
     prevSection: $('#prev-section'),
     nextSection: $('#next-section'),
+    saveToLibrary: $('#save-song-library'),
     autofill: $('#autofill-song'),
     clearSong: $('#clear-song'),
     sections: $('#sections-out'),
@@ -518,6 +519,13 @@ export function initSong(ctx, panels) {
             title: 'Render this section on its own as an audio file',
             onclick: () => ctx.exportSectionAudio?.(section),
           }, ['⤓ Audio']),
+          // The shelf on the Library tab, which outlives this song.
+          el('button', {
+            type: 'button',
+            class: 'btn ghost',
+            title: 'Keep it in the library, to use in another song',
+            onclick: () => ctx.library?.saveSection(section),
+          }, ['📚']),
           el('button', {
             type: 'button',
             class: 'btn ghost danger',
@@ -629,6 +637,7 @@ export function initSong(ctx, panels) {
     }
   });
   ui.name.addEventListener('change', () => { if (current()) updateSection(); });
+  ui.saveToLibrary.addEventListener('click', () => ctx.library?.saveSong());
   ui.autofill.addEventListener('click', autofill);
   ui.clearSong.addEventListener('click', () => {
     state.arrangement = [];

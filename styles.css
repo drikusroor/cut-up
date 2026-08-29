@@ -645,6 +645,25 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
   .mix-master { grid-template-columns: 1fr; }
 }
 
+/* The library shelves. Cards rather than rows, because what you are looking
+   for is "the one with those chords" rather than a file name. */
+.library-shelf { display: grid; gap: 0.5rem; margin-bottom: 1.2rem; }
+.library-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  padding: 0.55rem 0.7rem;
+  display: grid;
+  gap: 0.25rem;
+}
+.library-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.library-name { font-weight: 600; }
+.library-when { font-size: 0.72rem; color: var(--ink-faint); }
+.library-meta { font-size: 0.78rem; color: var(--ink-dim); }
+.section-label .count { color: var(--ink-faint); font-weight: 400; }
+#panel-library.is-dropping { outline: 2px dashed var(--accent-soft); outline-offset: -0.5rem; }
+
 .colophon {
   padding: 2rem clamp(1rem, 4vw, 2.5rem) 1rem;
   color: var(--ink-faint);
