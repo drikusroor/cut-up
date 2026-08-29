@@ -9,6 +9,7 @@ import { arrange, tempoScaleOf } from './arrange.js';
 import { swingOffset } from './rhythm.js';
 import { bassInstrument, harmonyInstrument, leadInstrument } from './instruments.js';
 import { humanizeOffset } from './humanize.js';
+import { defaultVocal } from './vocal.js';
 import { noteCents } from './tuning.js';
 import { masterChain, mtof, Synth } from './synth.js';
 
@@ -104,7 +105,7 @@ export function songEvents(synth, song) {
     tempo = 100,
     swing = 0,
     parts = {
-      chords: true, melody: true, bass: true, drums: true,
+      chords: true, melody: true, bass: true, drums: true, vocal: true,
     },
     instruments = synth.instruments,
     feel = synth.feel,
@@ -140,6 +141,11 @@ export function songEvents(synth, song) {
     tuning,
   });
 
+  /**
+   * One pass of the song as a list of things to do and when to do them,
+   * ordered. Nothing is built here — an event is a closure that will make its
+   * nodes later, when the playhead is nearly on it.
+   */
   const events = [];
 
   if (parts.chords) {
@@ -180,6 +186,29 @@ export function songEvents(synth, song) {
           spec, note.midi, time, duration,
           ((note.velocity ?? 96) / 127) * 0.28,
           centsOf('lead', note),
+        ),
+      });
+    }
+  }
+  // The voice rides on the melody's notes rather than having a part of its
+  // own: a syllable is stuck to a note by vocal.js, and the two are heard
+  // together or one without the other, whichever the transport is asking for.
+  if (parts.vocal !== false) {
+    const sung = { ...defaultVocal(), ...(song.vocal || {}) };
+    for (const note of melody) {
+      if (!note.syllable) continue;
+      // A note brings its own singer where it has one, so a song can change
+      // voice from one section to the next the way it changes instrument.
+      const settings = note.vocal ? { ...sung, ...note.vocal } : sung;
+      const duration = Math.max(0.12, note.length * clock.stepSeconds(note.step) * 0.96);
+      const lead = leadInstrument(note.instrument || instruments.lead);
+      events.push({
+        at: nudged('melody', note.step),
+        play: (time) => synth.sing(
+          note, time, duration,
+          ((note.velocity ?? 96) / 127) * 0.34 * settings.level,
+          centsOf('lead', note),
+          { voice: settings.voice, mode: settings.mode, lead },
         ),
       });
     }
@@ -244,6 +273,7 @@ export class AudioEngine extends Synth {
     return this.ctx;
   }
 
+
   get currentStep() {
     if (!this.playing || !this.ctx || !this.loopSeconds) return -1;
     const elapsed = this.ctx.currentTime - this.startTime;
@@ -276,11 +306,15 @@ export class AudioEngine extends Synth {
    * @param {Array<{midi:number, step:number, length:number, velocity?:number}>} [song.bass]
    * @param {{tracks: Array<{id:string, pattern:boolean[], velocities:number[]}>}} [song.rhythm]
    * @param {{lead?:string, harmony?:string, bass?:string, kit?:string}} [song.instruments]
+   * @param {{voice?:string, mode?:string, level?:number}} [song.vocal] how the
+   *   words on the melody are sung — see vocal.js
    * @param {object} [song.feel] humanize settings — see humanize.js
    * @param {object} [song.tuning] temperament and detune — see tuning.js
    * @param {number} [song.totalSteps]
    * @param {boolean} [song.loop]
-   * @param {{chords?:boolean, melody?:boolean, bass?:boolean, drums?:boolean}} [song.parts]
+   * @param {{chords?:boolean, melody?:boolean, bass?:boolean, drums?:boolean, vocal?:boolean}} [song.parts]
+   * @param {number} [song.startStep] where to enter the pass — a seek, not a
+   *   loop point: later passes still start again from the top.
    */
   play(song) {
     this.stop();
@@ -294,7 +328,13 @@ export class AudioEngine extends Synth {
     this.playing = true;
 
     const startAt = ctx.currentTime + 0.08;
-    this.startTime = startAt;
+    // A seek: the pass is entered partway through rather than at the top, so
+    // "now" has to line up with wherever startStep falls in it. Later passes
+    // are unaffected — once the loop wraps it plays from the top as normal.
+    const seekAt = song.startStep > 0
+      ? Math.min(this.loopSeconds, Math.max(0, clock.timeAt(song.startStep)))
+      : 0;
+    this.startTime = startAt - seekAt;
 
     // The transport is a rolling window, not one big booking.
     //
@@ -304,8 +344,11 @@ export class AudioEngine extends Synth {
     // for the length of the song. That is what makes a long song stutter,
     // start late, or never start at all. So only the next second or two is ever
     // booked, and the rest is built as the playhead reaches it.
-    let origin = startAt;
-    let cursor = 0;
+    let origin = this.startTime;
+    // Events before the seek point are skipped for this first pass only — the
+    // cursor rejoins the top of the list once the loop wraps.
+    let cursor = seekAt > 0 ? events.findIndex((event) => event.at >= seekAt) : 0;
+    if (cursor < 0) cursor = events.length;
     let lastPump = ctx.currentTime;
 
     const pump = () => {
@@ -379,6 +422,23 @@ export class AudioEngine extends Synth {
     midis.forEach((midi, i) => this.voice(
       spec, midi, time + i * gap, length, gain, this.previewCents(part, midi),
     ));
+  }
+
+  /** A line of words on a few notes, for the ▶ next to the voice. */
+  auditionVoice(notes, opts = {}) {
+    this.ensure();
+    // Room in front for the consonants that are sung ahead of the beat.
+    const at = this.ctx.currentTime + 0.12;
+    for (const note of notes) {
+      this.sing(
+        note,
+        at + note.step * 0.34,
+        note.length * 0.34,
+        0.24,
+        0,
+        opts,
+      );
+    }
   }
 
   /** Short blip, so dragging a note in the piano roll tells you where you are. */

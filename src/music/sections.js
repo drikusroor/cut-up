@@ -8,6 +8,7 @@
 
 import { naturalSteps } from './arrange.js';
 import { resolveInstruments } from './instruments.js';
+import { singMelody } from './vocal.js';
 import { stepsPerBar } from './meter.js';
 
 export const SECTION_KINDS = [
@@ -99,7 +100,10 @@ export function sectionSong(section) {
   return {
     chordVoicings: music.voicings || [],
     stepsPerChord: music.stepsPerChord || 16,
-    melody: music.melody || [],
+    // The words are set on the melody here rather than stored beside it, so a
+    // section that has had its tune redrawn is re-sung against the new notes
+    // and never plays a syllable that belonged to a note that has gone.
+    melody: singMelody(music).notes,
     // The bass is optional, and a section saved before it existed has none.
     bass: music.bassOn === false ? [] : (music.bass || []),
     rhythm: section?.rhythm?.pattern || null,

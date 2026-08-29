@@ -55,6 +55,8 @@ export function initSong(ctx, panels) {
     playSong: $('#play-song'),
     exportSong: $('#export-song-midi'),
     exportSongAudio: $('#export-song-audio'),
+    prevSection: $('#prev-section'),
+    nextSection: $('#next-section'),
     autofill: $('#autofill-song'),
     clearSong: $('#clear-song'),
     sections: $('#sections-out'),
@@ -334,6 +336,8 @@ export function initSong(ctx, panels) {
       // fresh checkout this line changes precisely nothing.
       taste: ctx.taste?.(),
       tasteStrength: state.tasteStrength ?? 1,
+      // And it sings, if the Voice box is on — a share of the lyric per idea.
+      vocal: state.music.vocal,
     });
 
     if (ui.replace.checked) {
@@ -415,6 +419,9 @@ export function initSong(ctx, panels) {
           : null,
         el('div', { class: 'section-actions' }, [
           el('button', {
+            type: 'button', class: 'btn ghost', title: 'Play just this section', onclick: () => ctx.playCards?.([section], { meter: section.meter }),
+          }, ['▶']),
+          el('button', {
             type: 'button', class: 'btn ghost', title: 'Add it to the running order', onclick: () => addToSong(section),
           }, ['＋ Song']),
           el('button', {
@@ -442,6 +449,8 @@ export function initSong(ctx, panels) {
 
   function renderArrangement() {
     const plan = buildSongPlan(state.sections, state.arrangement);
+    ui.prevSection.disabled = !plan.blocks.length;
+    ui.nextSection.disabled = !plan.blocks.length;
 
     if (!plan.blocks.length) {
       ui.arrangement.replaceChildren(el('p', { class: 'hint' }, [
@@ -574,6 +583,8 @@ export function initSong(ctx, panels) {
   ui.playSong.addEventListener('click', () => ctx.playSong());
   ui.exportSong.addEventListener('click', () => ctx.exportSong());
   ui.exportSongAudio.addEventListener('click', () => ctx.exportSongAudio());
+  ui.prevSection.addEventListener('click', () => ctx.skipSection(-1));
+  ui.nextSection.addEventListener('click', () => ctx.skipSection(1));
 
   writeCompose();
   render();

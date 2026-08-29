@@ -7,10 +7,13 @@
 // instruments.js: oscillators, an envelope, a filter, optionally a modulator or
 // a puff of noise. Adding an instrument means adding data, not code. Drums are
 // the same idea with a smaller vocabulary — a table of pieces, and a kit that
-// tunes and stretches all of them at once.
+// tunes and stretches all of them at once. The voice is a third: a buzz, three
+// formants and, where the browser has a wave shaper, a vocoder.
 
 import { drumKit } from './instruments.js';
 import { defaultHumanize } from './humanize.js';
+import { phoneInfo } from './phonemes.js';
+import { phoneSchedule, vocalMode, vocalVoice } from './vocal.js';
 import { defaultTuning, noteCents } from './tuning.js';
 
 /**
@@ -47,6 +50,21 @@ const METAL_RATIOS = [1, 1.4471, 1.6171, 1.9265, 2.5028, 2.6637];
 /** How many finished notes may pile up before the engine forgets them. */
 const SWEEP_AT = 512;
 
+/**
+ * The vocoder's channels: how many bands the speech is measured in, and the
+ * range they are spread over. Fourteen is about where a listener stops hearing
+ * separate bands and starts hearing words; the top is high enough for an "s"
+ * to be somewhere, and the sibilance bypass takes care of the rest.
+ */
+const VOCODER_BANDS = 14;
+const VOCODER_LOW = 180;
+const VOCODER_HIGH = 6500;
+const VOCODER_Q = 5;
+/** The modulator's own pitch, which a vocoder throws away — only its shape is used. */
+const SPEECH_HZ = 132;
+/** How fast a formant may move between two sounds. Slower is a mumble. */
+const GLIDE = 0.028;
+
 export function mtof(midi) {
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
@@ -76,7 +94,7 @@ export function masterChain(ctx) {
  *
  * It knows nothing about songs or transports. The live engine subclasses it
  * and adds a clock; the renderer points one at an OfflineAudioContext and
- * books the whole song into it at once.
+ * books a whole song into it as fast as the machine will take it.
  */
 export class Synth {
   /**
@@ -101,6 +119,7 @@ export class Synth {
     this.tuning = defaultTuning();
     this.rootPc = 0;
   }
+
 
   /** Keeps previews in step with whatever the panels currently have selected. */
   setInstruments(instruments) {
@@ -160,6 +179,7 @@ export class Synth {
     // arrangement does not sweep on every single note it plays.
     this.sweepAt = Math.max(SWEEP_AT, this.voices.length * 2);
   }
+
   /**
    * Builds one note out of an instrument recipe. Every melodic sound in the app
    * comes through here.
@@ -171,8 +191,11 @@ export class Synth {
    * @param {number} gain
    * @param {number} [detune] cents off equal temperament — an unequal
    *   temperament, an instrument that is slightly out, or both
+   * @param {AudioNode} [destination] where it comes out; the master bus unless
+   *   something else wants it, which is how the talk box gets to play the
+   *   melody instrument into the vocoder instead of into the room
    */
-  voice(spec, midi, time, duration, gain = 0.2, detune = 0) {
+  voice(spec, midi, time, duration, gain = 0.2, detune = 0, destination = null) {
     const ctx = this.ctx;
     const freq = mtof(midi);
     const env = { attack: 0.01, decay: 0.2, sustain: 0.7, release: 0.1, ...(spec.env || {}) };
@@ -185,7 +208,7 @@ export class Synth {
     out.gain.linearRampToValueAtTime(level, time + env.attack);
     out.gain.setTargetAtTime(level * env.sustain, time + env.attack, Math.max(0.005, env.decay));
     out.gain.setTargetAtTime(0.0001, time + duration, Math.max(0.005, env.release));
-    out.connect(this.master);
+    out.connect(destination || this.master);
 
     const shape = spec.filter || { type: 'lowpass', from: 12000 };
     const filter = ctx.createBiquadFilter();
@@ -263,6 +286,307 @@ export class Synth {
       noise.start(time);
       noise.stop(time + noiseTail);
       this.track(noise, time + noiseTail);
+    }
+  }
+
+  /**
+   * The vocoder, built once and left standing.
+   *
+   * A channel vocoder is two filter banks and a set of envelope followers
+   * between them. The modulator — here, synthesised speech — is split into
+   * fourteen bands; each band is rectified and smoothed, which leaves a slow
+   * control signal saying "there is this much energy around 800 Hz just now".
+   * The carrier is split into the same fourteen bands, and each band's level is
+   * driven by the matching control signal. The carrier comes out wearing the
+   * modulator's mouth.
+   *
+   * None of that needs a script processor: an envelope is an audio signal, and
+   * an audio signal can be connected straight to a gain's `gain`.
+   *
+   * The rig is per-context rather than per-note. Fourteen bands is around
+   * eighty nodes, and building that for every syllable of a four-minute song
+   * would be a great deal of silicon spent on the same eighty filters.
+   */
+  vocalRig() {
+    if (this._rig) return this._rig;
+    const ctx = this.ctx;
+    const modIn = ctx.createGain();
+    const carrierIn = ctx.createGain();
+    const out = ctx.createGain();
+    out.gain.value = 1.5;
+    out.connect(this.master);
+
+    // Rectification: |x|. Turning a waveform into its own outline is the whole
+    // of an envelope follower, once a lowpass has taken the ripple off.
+    const curve = new Float32Array(257);
+    for (let i = 0; i < curve.length; i++) curve[i] = Math.abs((i / 128) - 1);
+
+    const bands = [];
+    for (let b = 0; b < VOCODER_BANDS; b++) {
+      const hz = VOCODER_LOW * (VOCODER_HIGH / VOCODER_LOW) ** (b / (VOCODER_BANDS - 1));
+      const band = (input) => {
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.value = hz;
+        filter.Q.value = VOCODER_Q;
+        input.connect(filter);
+        return filter;
+      };
+
+      const rect = ctx.createWaveShaper();
+      rect.curve = curve;
+      const follower = ctx.createBiquadFilter();
+      follower.type = 'lowpass';
+      follower.frequency.value = 24;
+      const depth = ctx.createGain();
+      // The bands nearer the top carry the consonants and are quieter to start
+      // with, so they are opened harder.
+      depth.gain.value = 3 + (b / VOCODER_BANDS) * 2.5;
+      band(modIn).connect(rect).connect(follower).connect(depth);
+
+      const vca = ctx.createGain();
+      vca.gain.value = 0;
+      depth.connect(vca.gain);
+      band(carrierIn).connect(vca).connect(out);
+      bands.push(hz);
+    }
+
+    // Sibilance goes straight past the bank. An "s" is noise above where the
+    // top band sits, and a vocoder that has to reconstruct it from a sawtooth
+    // gets a whistle instead — so the real hiss is simply let through.
+    const hiss = ctx.createBiquadFilter();
+    hiss.type = 'highpass';
+    hiss.frequency.value = 4000;
+    const hissLevel = ctx.createGain();
+    hissLevel.gain.value = 0.45;
+    modIn.connect(hiss).connect(hissLevel).connect(out);
+
+    this._rig = { modIn, carrierIn, out, bands };
+    return this._rig;
+  }
+
+  /** Vocoding needs a rectifier, and a rectifier needs a wave shaper. */
+  canVocode() {
+    return typeof this.ctx?.createWaveShaper === 'function';
+  }
+
+  /**
+   * Sings one syllable.
+   *
+   * The voice is three bandpass filters and a buzz — park them at 270, 2290 and
+   * 3010 Hz and the buzz says "ee"; move them to 730, 1090, 2440 and it says
+   * "ah". Consonants are the same filters plus a band of noise: a hiss for the
+   * fricatives, a moment of silence and a click for the plosives. Where each
+   * sound falls inside the note is worked out by phoneSchedule(), so this only
+   * has to draw what it is told.
+   *
+   * In `sung` mode that voice goes to the speakers. In the other two it goes to
+   * the vocoder instead, at a fixed pitch — a vocoder keeps only the shape of
+   * its modulator — and the note's own pitch is played by the carrier: a
+   * sawtooth for `vocoder`, the melody's own instrument for `talkbox`.
+   *
+   * @param {{midi:number, syllable:{phones:string[], tie?:boolean, slideFrom?:number,
+   *   stressed?:boolean}}} note
+   * @param {number} time when the note is, in context time
+   * @param {number} duration
+   * @param {number} [gain]
+   * @param {number} [detune] cents
+   * @param {{voice?:string, mode?:string, lead?:object}} [opts]
+   */
+  sing(note, time, duration, gain = 0.22, detune = 0, opts = {}) {
+    const ctx = this.ctx;
+    const syllable = note?.syllable;
+    if (!ctx || !syllable?.phones?.length) return;
+
+    const spec = vocalVoice(opts.voice);
+    const mode = this.canVocode() ? vocalMode(opts.mode).id : 'sung';
+    const vocoded = mode !== 'sung';
+    const { segments, lead } = phoneSchedule(syllable.phones, duration);
+    // The consonants are sung ahead of the beat, and a context only a moment
+    // old has no room in front of it — Web Audio will not be scheduled before
+    // zero, so the syllable waits for the lead it needs.
+    const at0 = Math.max(time, lead);
+    const start = at0 - lead;
+    const end = at0 + duration;
+    const tail = end + 0.3;
+    const freq = mtof(note.midi);
+
+    const destination = vocoded ? this.vocalRig().modIn : this.master;
+    // A vocoder throws its modulator's pitch away, so the speech is spoken on
+    // one note and only the carrier knows what the tune is.
+    const pitch = vocoded ? SPEECH_HZ : freq;
+    const level = gain * (vocoded ? 1.6 : 1);
+
+    // The syllable's own envelope. A tied note is a vowel already sounding, so
+    // it fades in rather than starting, which is what makes a melisma one long
+    // sound instead of the word said twice.
+    const amp = ctx.createGain();
+    const attack = syllable.tie ? 0.06 : 0.018;
+    amp.gain.setValueAtTime(0, start);
+    amp.gain.linearRampToValueAtTime(level * (syllable.stressed ? 1.12 : 1), start + attack);
+    amp.gain.setValueAtTime(level * (syllable.stressed ? 1.12 : 1), Math.max(start + attack, end - 0.03));
+    amp.gain.setTargetAtTime(0.0001, end, 0.05);
+    amp.connect(destination);
+
+    // The throat: three resonances, loudest at the bottom, which between them
+    // are the difference between one vowel and another.
+    const formants = [];
+    for (let i = 0; i < 3; i++) {
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.Q.value = [7, 9, 11][i];
+      const mix = ctx.createGain();
+      mix.gain.value = [1, 0.55, 0.3][i];
+      filter.connect(mix).connect(amp);
+      formants.push(filter);
+    }
+
+    // The glottis: a sawtooth is a rough enough approximation of what vocal
+    // folds do, once the formants above have had it.
+    const glottis = ctx.createGain();
+    glottis.gain.setValueAtTime(0, start);
+    for (const filter of formants) glottis.connect(filter);
+
+    const buzz = ctx.createOscillator();
+    buzz.type = 'sawtooth';
+    buzz.frequency.setValueAtTime(pitch, start);
+    buzz.detune.value = detune;
+    if (!vocoded && syllable.slideFrom) {
+      // A held vowel slides onto its next note instead of restriking it.
+      buzz.frequency.setValueAtTime(mtof(syllable.slideFrom), start);
+      buzz.frequency.exponentialRampToValueAtTime(freq, start + Math.min(0.09, duration * 0.4));
+    }
+    buzz.connect(glottis);
+    buzz.start(start);
+    buzz.stop(tail);
+    this.track(buzz, tail);
+
+    // Nobody sings dead straight. The android does.
+    if (spec.vibrato && !vocoded) {
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = spec.vibrato.rate;
+      const swing = ctx.createGain();
+      swing.gain.setValueAtTime(0, start);
+      swing.gain.linearRampToValueAtTime(spec.vibrato.depth, start + (spec.vibrato.delay ?? 0.25));
+      lfo.connect(swing).connect(buzz.detune);
+      lfo.start(start);
+      lfo.stop(tail);
+      this.track(lfo, tail);
+    }
+
+    // The breath: one noise source, filtered differently from moment to moment,
+    // which is every fricative, every plosive burst and the air around a vowel.
+    const breath = ctx.createBufferSource();
+    breath.buffer = this.noiseBuffer();
+    breath.loop = true;
+    const breathBand = ctx.createBiquadFilter();
+    breathBand.type = 'bandpass';
+    breathBand.frequency.setValueAtTime(1500, start);
+    breathBand.Q.setValueAtTime(1, start);
+    const breathLevel = ctx.createGain();
+    breathLevel.gain.setValueAtTime(0, start);
+    breath.connect(breathBand).connect(breathLevel).connect(amp);
+    breath.start(start);
+    breath.stop(tail);
+    this.track(breath, tail);
+
+    const scale = spec.formant ?? 1;
+    const voicing = spec.voicing ?? 1;
+    const formantHz = (f, i) => Math.max(80, Math.min(f[i] * scale, ctx.sampleRate / 2 - 200));
+    /** Moves the throat to a new shape, over `glide` seconds. */
+    const setFormants = (f, at, glide = GLIDE) => {
+      formants.forEach((filter, i) => {
+        if (glide > 0) filter.frequency.linearRampToValueAtTime(formantHz(f, i), at + glide);
+        else filter.frequency.setValueAtTime(formantHz(f, i), at);
+      });
+    };
+
+    let placed = false;
+    for (const segment of segments) {
+      const info = phoneInfo(segment.p);
+      if (!info) continue;
+      const at = at0 + segment.at;
+      const stop = at + segment.dur;
+
+      if (info.f) {
+        // A vowel, a nasal or a liquid: shape the throat and let the folds run.
+        setFormants(info.f, at, placed ? GLIDE : 0);
+        placed = true;
+        if (info.glide) {
+          // A diphthong is one mouth moving. It holds the first shape, then
+          // starts travelling about halfway through, and arrives at the end.
+          const from = at + segment.dur * 0.45;
+          formants.forEach((filter, i) => filter.frequency.setValueAtTime(formantHz(info.f, i), from));
+          setFormants(info.glide, from, Math.max(0.04, segment.dur * 0.5));
+        }
+        glottis.gain.setTargetAtTime(voicing * (info.level ?? 1), at, 0.012);
+        breathLevel.gain.setTargetAtTime(spec.breath * 0.25 * (info.kind === 'vowel' ? 1 : 0.4), at, 0.02);
+        continue;
+      }
+
+      if (info.kind === 'plosive' || info.kind === 'affricate') {
+        // Silence, then a click. The silence is the consonant, really — it is
+        // what tells you a "t" happened rather than a hiss.
+        const closure = Math.min(info.closure ?? 0.025, segment.dur * 0.6);
+        glottis.gain.setTargetAtTime(info.voiced ? voicing * 0.15 : 0, at, 0.006);
+        breathLevel.gain.setTargetAtTime(0, at, 0.006);
+        const burstAt = at + closure;
+        breathBand.frequency.setValueAtTime(info.burst, burstAt);
+        breathBand.Q.setValueAtTime(info.q ?? 1.2, burstAt);
+        breathLevel.gain.setValueAtTime(info.level, burstAt);
+        if (info.kind === 'affricate') {
+          // A "ch" is a "t" that lets go into a "sh".
+          breathBand.frequency.linearRampToValueAtTime(info.band, burstAt + 0.02);
+          breathLevel.gain.setTargetAtTime(info.level * 0.8, burstAt + 0.02, 0.03);
+          breathLevel.gain.setTargetAtTime(0.0001, stop, 0.015);
+        } else {
+          breathLevel.gain.setTargetAtTime(0.0001, burstAt + 0.012, 0.02);
+        }
+        if (info.voiced) glottis.gain.setTargetAtTime(voicing, burstAt, 0.01);
+        continue;
+      }
+
+      // A fricative or an aspirate: noise in a band, with the folds running
+      // underneath it or not.
+      breathBand.frequency.setTargetAtTime(info.band, at, 0.01);
+      breathBand.Q.setValueAtTime(info.q ?? 1.2, at);
+      breathLevel.gain.setTargetAtTime(info.level, at, 0.012);
+      glottis.gain.setTargetAtTime(info.voiced ? voicing * 0.35 : 0, at, 0.012);
+    }
+
+    // Whatever the last sound was, the mouth closes at the end of the note.
+    glottis.gain.setTargetAtTime(0.0001, end, 0.04);
+    breathLevel.gain.setTargetAtTime(0.0001, end, 0.04);
+
+    if (!vocoded) return;
+
+    // The carrier: what the words are sung *on*. This is where the tune is.
+    const rig = this.vocalRig();
+    if (mode === 'talkbox' && opts.lead) {
+      this.voice(opts.lead, note.midi, at0, duration, 0.9, detune, rig.carrierIn);
+      return;
+    }
+    const carrier = ctx.createGain();
+    carrier.gain.setValueAtTime(0, start);
+    carrier.gain.linearRampToValueAtTime(0.5, start + 0.012);
+    carrier.gain.setValueAtTime(0.5, Math.max(start + 0.012, end - 0.02));
+    carrier.gain.setTargetAtTime(0.0001, end, 0.04);
+    carrier.connect(rig.carrierIn);
+    // Two saws a few cents apart and an octave under, so every band has
+    // something to open onto — a vocoder is only as rich as what it is fed.
+    for (const [type, ratio, cents, mix] of [
+      ['sawtooth', 1, -7, 1], ['sawtooth', 1, 7, 1], ['square', 0.5, 0, 0.5],
+    ]) {
+      const osc = ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.value = freq * ratio;
+      osc.detune.value = detune + cents;
+      const trim = ctx.createGain();
+      trim.gain.value = mix;
+      osc.connect(trim).connect(carrier);
+      osc.start(start);
+      osc.stop(tail);
+      this.track(osc, tail);
     }
   }
 

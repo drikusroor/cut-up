@@ -26,6 +26,16 @@ import {
   resolveLead,
 } from '../music/instruments.js';
 import { BASS_REGISTERS, BASS_STYLES, generateBass } from '../music/bass.js';
+import {
+  normalizeVocal,
+  setLyric,
+  singMelody,
+  VOCAL_MODES,
+  VOCAL_SOURCES,
+  VOCAL_VOICES,
+  vocalMode,
+  vocalVoice,
+} from '../music/vocal.js';
 import { meterInfo } from '../music/meter.js';
 import {
   applyMelodyEdits,
@@ -92,6 +102,17 @@ export function initChords(ctx) {
     hearLead: $('#hear-lead'),
     hearHarmony: $('#hear-harmony'),
     hearBass: $('#hear-bass'),
+    vocalOn: $('#vocal-on'),
+    vocalControls: $('#vocal-controls'),
+    vocalSource: $('#vocal-source'),
+    vocalTextWrap: $('#vocal-text-wrap'),
+    vocalText: $('#vocal-text'),
+    vocalVoice: $('#vocal-voice'),
+    vocalVoiceHint: $('#vocal-voice-hint'),
+    vocalMode: $('#vocal-mode'),
+    vocalModeHint: $('#vocal-mode-hint'),
+    vocalReadout: $('#vocal-readout'),
+    hearVoice: $('#hear-voice'),
   };
 
   const sliders = ['sevenths', 'spice'];
@@ -116,6 +137,9 @@ export function initChords(ctx) {
   fillSelect(ui.scale, SCALES.map((s) => ({ value: s.id, label: s.label })), m.scaleId);
   fillSelect(ui.mode, PROGRESSION_MODES.map((p) => ({ value: p.id, label: p.label })), m.mode);
   fillSelect(ui.shape, MELODY_SHAPES.map((s) => ({ value: s.id, label: s.label })), m.melodyShape);
+  fillSelect(ui.vocalSource, VOCAL_SOURCES.map((s) => ({ value: s.id, label: s.label })), m.vocal.source);
+  fillSelect(ui.vocalVoice, VOCAL_VOICES.map((v) => ({ value: v.id, label: v.label })), m.vocal.voice);
+  fillSelect(ui.vocalMode, VOCAL_MODES.map((v) => ({ value: v.id, label: v.label })), m.vocal.mode);
 
   const noteOptions = Array.from({ length: 49 }, (_, i) => {
     const midi = 48 + i; // C3 .. C7
@@ -169,6 +193,13 @@ export function initChords(ctx) {
     ui.bassOn.checked = Boolean(m.bassOn);
     ui.bassStyle.value = m.bassStyle;
     ui.bassOctave.value = String(m.bassOctave);
+    ui.vocalOn.checked = Boolean(m.vocal.on);
+    ui.vocalSource.value = m.vocal.source;
+    ui.vocalText.value = m.vocal.text;
+    ui.vocalVoice.value = m.vocal.voice;
+    ui.vocalMode.value = m.vocal.mode;
+    $('#vocal-melisma').value = String(m.vocal.melisma);
+    $('#vocal-level').value = String(m.vocal.level);
     // Before anything reads the controls, or the stored seeds look like blanks.
     ui.chordSeed.value = m.chordSeed;
     ui.melodySeed.value = m.melodySeed;
@@ -178,9 +209,13 @@ export function initChords(ctx) {
     ui.bass.value = m.bassInstrument || AUTO;
     syncSound();
     syncBass();
+    syncVocal();
     for (const id of sliders) $(`#${id}`).value = m[id];
     for (const [id, key] of [...melodySliders, ...bassSliders]) $(`#${id}`).value = m[key];
-    for (const id of ['sevenths', 'spice', 'mel-density', 'chordTones', 'restiness', ...bassSliders.map(([x]) => x)]) {
+    for (const id of [
+      'sevenths', 'spice', 'mel-density', 'chordTones', 'restiness',
+      'vocal-melisma', 'vocal-level', ...bassSliders.map(([x]) => x),
+    ]) {
       $(`#${id}`).dispatchEvent(new Event('input'));
     }
   }
@@ -201,6 +236,68 @@ export function initChords(ctx) {
     const style = BASS_STYLES.find((s) => s.id === m.bassStyle);
     ui.bassHint.textContent = style ? style.hint : '';
     ui.bassControls.hidden = !m.bassOn;
+  }
+
+  /**
+   * The words the voice is singing.
+   *
+   * They are resolved rather than typed: the Words tab is where lines come
+   * from, so choosing "the lines on the Words tab" means the tune re-sings
+   * whatever is up there now — including after a reroll.
+   */
+  function lyricLines() {
+    const v = m.vocal;
+    if (v.source === 'own') return v.text.split('\n').map((line) => line.trim()).filter(Boolean);
+    if (v.source === 'keepers') return (state.words.keepers || []).filter(Boolean);
+    return (state.words.output || []).filter(Boolean);
+  }
+
+  /**
+   * Freezes the words and the language into the section's own state, so a
+   * section saved today still sings the same line after tomorrow's reroll.
+   */
+  function holdLyric() {
+    m.vocal.lines = lyricLines();
+    m.vocal.lang = state.words.lang === 'nl' ? 'nl' : 'en';
+  }
+
+  function syncVocal() {
+    ui.vocalControls.hidden = !m.vocal.on;
+    ui.vocalTextWrap.hidden = m.vocal.source !== 'own';
+    ui.vocalVoiceHint.textContent = vocalVoice(m.vocal.voice).hint;
+    ui.vocalModeHint.textContent = vocalMode(m.vocal.mode).hint;
+    renderVocalReadout();
+  }
+
+  /**
+   * The melody with the words already on it, kept so the piano roll can print
+   * them without setting them again for every frame of a drag.
+   */
+  let sungNotes = [];
+
+  /** How the words actually landed on the notes — the thing you want to know. */
+  function renderVocalReadout() {
+    if (!m.vocal.on) {
+      sungNotes = [];
+      ui.vocalReadout.textContent = '';
+      return;
+    }
+    holdLyric();
+    const { stats, notes } = singMelody(m);
+    sungNotes = notes.filter((note) => note.syllable);
+    if (!stats) {
+      ui.vocalReadout.textContent = m.vocal.lines.length
+        ? 'No melody to sing yet — roll one.'
+        : 'No words yet. Generate some on the Words tab, or type your own.';
+      return;
+    }
+    const parts = [
+      `${stats.syllables} syllable${stats.syllables === 1 ? '' : 's'} over ${stats.phrases} phrase${stats.phrases === 1 ? '' : 's'}`,
+    ];
+    if (stats.melismas) parts.push(`${stats.melismas} note${stats.melismas === 1 ? '' : 's'} held`);
+    if (stats.splits) parts.push(`${stats.splits} note${stats.splits === 1 ? '' : 's'} divided to fit`);
+    if (stats.unsung) parts.push(`${stats.unsung} left over — the tune ran out first`);
+    ui.vocalReadout.textContent = `${parts.join(' · ')}.`;
   }
 
   /** The three voices this idea is currently played with. */
@@ -249,6 +346,17 @@ export function initChords(ctx) {
     m.bassOn = ui.bassOn.checked;
     m.bassStyle = ui.bassStyle.value;
     m.bassOctave = Number(ui.bassOctave.value);
+    m.vocal = normalizeVocal({
+      ...m.vocal,
+      on: ui.vocalOn.checked,
+      source: ui.vocalSource.value,
+      text: ui.vocalText.value,
+      voice: ui.vocalVoice.value,
+      mode: ui.vocalMode.value,
+      melisma: Number($('#vocal-melisma').value),
+      level: Number($('#vocal-level').value),
+    });
+    holdLyric();
     if (m.rangeHigh < m.rangeLow + 7) m.rangeHigh = m.rangeLow + 7;
     for (const id of sliders) m[id] = Number($(`#${id}`).value);
     for (const [id, key] of [...melodySliders, ...bassSliders]) m[key] = Number($(`#${id}`).value);
@@ -395,6 +503,9 @@ export function initChords(ctx) {
       range: EDIT_RANGE,
     });
     renderEditStatus();
+    // A new line of notes is a new setting of the words, so the count under the
+    // Voice box is redone whenever the tune moves.
+    renderVocalReadout();
   }
 
   function pushUndo() {
@@ -615,6 +726,24 @@ export function initChords(ctx) {
       if (w > RESIZE_GRIP * 1.5) {
         g.fillStyle = 'rgba(0,0,0,0.28)';
         g.fillRect(x + 1 + w - 2.5, y + 2, 1.5, h - 2);
+      }
+    }
+
+    // The words, over the notes they are sung on. A note that only holds the
+    // vowel of the syllable before it gets a tie rather than the word again.
+    if (sungNotes.length) {
+      g.font = '10px system-ui, sans-serif';
+      g.textBaseline = 'alphabetic';
+      for (const note of sungNotes) {
+        if (note.midi < low || note.midi > high) continue;
+        const x = note.step * stepWidth;
+        const y = (high - note.midi) * rowHeight;
+        const label = note.syllable.tie ? '‿' : note.syllable.text;
+        if (!label || note.length * stepWidth < 6) continue;
+        g.fillStyle = 'rgba(0,0,0,0.55)';
+        g.fillText(label, x + 3, y - 1);
+        g.fillStyle = note.syllable.tie ? 'rgba(234,230,217,0.55)' : '#f3efe4';
+        g.fillText(label, x + 2, y - 2);
       }
     }
   }
@@ -860,6 +989,41 @@ export function initChords(ctx) {
   for (const id of ['bass-style', 'bass-density', 'bass-motion', 'bass-counter', 'bass-octave']) {
     $(`#${id}`).addEventListener('change', () => rollBass({ newSeed: false }));
   }
+
+  // The voice changes nothing about the notes — it is a way of playing them —
+  // so none of these regenerate anything. They re-read, redraw and, if the
+  // transport is running, take effect on the next pass.
+  for (const id of [
+    'vocal-on', 'vocal-source', 'vocal-text', 'vocal-voice', 'vocal-mode',
+    'vocal-melisma', 'vocal-level',
+  ]) {
+    $(`#${id}`).addEventListener('change', () => {
+      readControls();
+      syncVocal();
+      renderRoll();
+      save();
+      ctx.refreshPlayback?.();
+    });
+  }
+
+  // Two bars of whatever it is about to sing, so choosing a singer is a thing
+  // you do by ear rather than by reading the labels.
+  ui.hearVoice.addEventListener('click', () => {
+    readControls();
+    syncVocal();
+    const line = m.vocal.lines[0] || 'cut up the paper';
+    const root = Math.max(48, Math.min(72, m.rangeLow + 2));
+    const shape = [0, 2, 4, 2, 0, -1, 0];
+    const notes = shape.map((degree, i) => ({ midi: root + degree, step: i, length: 1 }));
+    const { notes: sung } = setLyric(notes, [line], {
+      lang: m.vocal.lang, melisma: m.vocal.melisma, seed: m.melodySeed,
+    });
+    audio.auditionVoice(sung, {
+      voice: m.vocal.voice,
+      mode: m.vocal.mode,
+      lead: leadInstrument(currentSound().lead),
+    });
+  });
   ui.own.addEventListener('change', () => generateChords({ newSeed: true }));
 
   // Typing a seed in replays it; the dice roll a fresh one for that part only.
@@ -930,6 +1094,17 @@ export function initChords(ctx) {
     },
     /** New melody over the same chords — what forking a variation does. */
     rerollMelody: () => generateMelodyLine({ newSeed: true }),
+    /**
+     * The Words tab produced new lines. If the voice is singing whatever is up
+     * there, it is now singing something else.
+     */
+    refreshVocal() {
+      if (!m.vocal.on || m.vocal.source === 'own') return;
+      renderVocalReadout();
+      renderRoll();
+      save();
+      ctx.refreshPlayback?.();
+    },
     /**
      * The same bass line rewritten against whatever the drums are doing now.
      * The Rhythm tab calls this whenever the pattern changes, which is what
