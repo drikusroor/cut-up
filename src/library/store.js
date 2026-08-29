@@ -74,6 +74,28 @@ function idbRun(storeName, mode, run) {
 /** Whatever is in the tab's memory, for when there is nowhere at all to write. */
 const memory = { sections: new Map(), songs: new Map() };
 
+/**
+ * Is there a localStorage that actually works?
+ *
+ * Asked by writing to it, because the ways it fails are not "it is missing":
+ * Safari in a private window has one that throws on every write, and a browser
+ * with site data switched off has one that reads back empty. Either way the
+ * answer has to be no, or a library would be quietly dropped into a hole.
+ */
+let localOk = null;
+function localAvailable() {
+  if (localOk !== null) return localOk;
+  try {
+    const probe = `${LOCAL_PREFIX}probe`;
+    localStorage.setItem(probe, '1');
+    localStorage.removeItem(probe);
+    localOk = true;
+  } catch {
+    localOk = false;
+  }
+  return localOk;
+}
+
 function localKey(storeName) {
   return `${LOCAL_PREFIX}${storeName}`;
 }
@@ -107,6 +129,10 @@ async function withStore(storeName, mode, { idb, local, mem }) {
     backend = 'indexeddb';
     return result;
   } catch {
+    if (!localAvailable()) {
+      backend = 'memory';
+      return mem();
+    }
     try {
       const result = local();
       backend = 'localstorage';

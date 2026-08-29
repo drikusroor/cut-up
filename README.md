@@ -6,7 +6,8 @@ Brion Gysin and William Burroughs cut printed pages into strips and reassembled
 them at random; David Bowie did the same with a pile of newspapers, and later
 with a program he called the Verbasizer, to write lyrics for *Diamond Dogs* and
 *Outside*. This does that for you — and then does the same trick to chord
-progressions, melodies and drum patterns, and then sings the one on the other.
+progressions, melodies and drum patterns, sings the one on the other, mixes the
+result, and keeps what you liked.
 
 Everything runs client-side. No build step, no dependencies, nothing uploaded.
 
@@ -270,6 +271,8 @@ Each saved section can be:
 | **＋ Song** | Drop it into the running order. |
 | **Edit** | Open it back up in the other tabs, exactly as you left it. |
 | **Fork** | Copy it into a new section, so you can take a variation somewhere else without losing the original. **Fork a variation** does the same and rolls a new melody over the same chords — the quick way to get a B out of an A. |
+| **↻ Regenerate ▾** | Roll it again. See below. |
+| **📚** | File it in the library, to use in another song. |
 
 The running order is a row of chips: reorder them with ‹ ›, set how many times
 each one repeats, and drop them out again with ✕. **Auto-arrange** lays out
@@ -289,8 +292,49 @@ counted in 3/4 brings the 3/4 back with it. A section stores the *choice* rather
 than the result, so one left on "from the seed" re-derives its sound from its
 own seeds:
 every section you roll turns up in a different colour, and none of them drift
-when you go back to them. Tempo, feel, tuning and which parts sound stay
-global — they live in the transport.
+when you go back to them. Tempo, feel, tuning, the mix and which parts sound
+stay global — they live in the transport.
+
+### Rolling a section again
+
+A section is a frozen set of *settings* as much as a frozen set of notes: the
+key, the shape of the tune, how dense the drums are, every seed. So it can be
+rolled again without being rebuilt by hand — and the button on each card has two
+halves, because there are two things you mean by that.
+
+**↻ Regenerate**, the left half, rolls the lot: new chords, new tune, new bass
+line, new drum pattern, new voices, all off the section's own settings. What
+comes back is another take of the same idea rather than a different idea — same
+length, same density, same shape of line, different roll of the dice.
+
+**▾**, the right half, opens the same machinery with the parts laid out:
+
+| | |
+| --- | --- |
+| **Chords** | A new progression, same length, same key unless you change it. |
+| **Melody** | A new tune over whatever the chords are. |
+| **Bass** | A new line, written against the drums and the tune. |
+| **Rhythm** | A new drum pattern, same style and density. |
+| **Instruments** | New voices for the four players, and nothing else. |
+
+Everything you leave unticked survives untouched, notes and all — which is how
+you keep the chords you like and roll only the tune over them. There is also a
+**key**: leave the chords alone and change the tonic and the whole section is
+simply *moved* there, notes and all, because a chorus a fourth up is the same
+chorus. Change the mode and it cannot be moved, only rewritten, so the chords
+are rolled whatever the boxes say.
+
+Two more things it will not do. A section written without chords — the drums-only
+count-in the composer puts at the top of a song — does not get handed a
+progression, and one written without a tune does not get handed one either:
+rolling changes what a section is made of, never what it is.
+
+A roll keeps the section's id, so it keeps its place in the running order and
+every repeat of it changes together — roll the chorus and all four choruses
+change. If you would rather not risk what you have, tick **leave the original
+alone** and the new take is filed beside it. Write a **seed** in and the same
+section rolled with the same seed comes out the same way twice, so a take you
+have rolled past can be got back.
 
 ### Compose a whole song
 
@@ -346,6 +390,64 @@ What comes out is not a special object. It is sections and a running order —
 open any of them, roll the melody, drag a note, change the kit, reorder the
 chips, delete the coda. The composer has no privileged state; it is a very fast
 way of doing what the tab already does by hand.
+
+## Library
+
+A saved section lives in the drawer on the Song tab, and the drawer belongs to
+the song you have open. The **Library** tab is the shelf behind it: things kept
+by name, across songs, across sessions, and — as files — across machines.
+
+There are two shelves, and they are different things on purpose.
+
+**Saved sections** are loose ideas. A chorus that works, a drum pattern you keep
+coming back to, a middle eight you wrote for something that went nowhere. The
+📚 button on any card on the Song tab files one here; **＋ Song** on the shelf
+copies it into whatever you have open now, and ▶ plays it where it stands.
+
+**Saved songs** are the whole desk: every section, the running order, the tempo,
+the time signature, the feel, the tuning, the mix, which parts are switched on,
+the idea still open on the other tabs, and the words it was all cut up from.
+**Open** puts you back where you were rather than merely playing you something —
+it asks first, because it replaces what you have.
+
+### Files
+
+Both shelves write files, and both read them:
+
+| | |
+| --- | --- |
+| **`.cutsec`** | one section, or several — an idea to send somebody, or to keep beside the lyrics |
+| **`.cutsong`** | the whole song, everything listed above |
+
+They are plain JSON with a header naming the format and a version, so they are
+readable, diffable and mailable, and a file from a newer version of Cut-Up is
+refused with a sentence rather than half-loaded into what you were working on.
+Nothing in a file is ever evaluated — everything is checked and clamped on the
+way in, because the whole point of a shareable file is that it came from
+somewhere else. Drop one anywhere on the Library tab to read it in, or use
+**⤒ Open a file**.
+
+This is the format to keep if you care about a song. MIDI carries the notes and
+a WAV carries the sound, but neither carries the *idea*: the seeds, the
+settings, the hand edits, the mix, the words.
+
+### Where it is kept
+
+In your browser, in IndexedDB, and the reason is size. A section is around 4 KB
+of JSON; a six-part song with all its sections is around 50 KB. That is nothing
+once, but a library is not once — a year of this is hundreds of sections and
+dozens of songs, tens of megabytes, and `localStorage` is about five for the
+whole origin, shared with the app's own state, read and written synchronously on
+the main thread. IndexedDB is asynchronous and measured in hundreds of megabytes;
+the line under the shelf tells you how much this browser has offered the page,
+and how much you have used.
+
+Where IndexedDB will not open — an old browser, some private windows — it falls
+back to `localStorage`, and where that fails too it keeps the library in memory
+for the session so the page still runs and the file buttons still work. The line
+under the shelf says which of the three you are on. Nothing ever leaves the
+machine either way, which is also why a file is worth exporting: a browser's
+storage is not a backup.
 
 ## Train
 
@@ -583,6 +685,43 @@ the bend range declared in the file — so a microtonal line survives the trip
 into a DAW. The chord track cannot be bent note by note on one channel, so it is
 left on the nearest keys.
 
+## Mix
+
+The **Mix** drawer in the transport is a five-channel desk: the melody, the
+voice riding on it, the chords, the bass and the kit. Each channel has the strip
+a desk has, in the order a desk has it:
+
+- **Level** and **Pan** — where it sits, and where it sits between the speakers.
+- **Low / Mid / High** — a wide, gentle three-band EQ (a shelf at 160 Hz, a bell
+  at 1 kHz, a shelf at 4.8 kHz), for carving room out of the middle rather than
+  for surgery.
+- **Squeeze** — one knob of compression. A real compressor has four controls and
+  they interact; this walks the threshold down as it walks the ratio up, which is
+  the diagonal across those four that people actually use, and gives some of what
+  it takes back so that turning it up does not only ever make a part quieter.
+- **Reverb** — a send, post-fader, to one shared plate. The plate's *size* and
+  *damping* are under the strips.
+- **M** and **S** — mute and solo. Soloing anything silences everything that is
+  not soloed, which is the quickest way to hear what one instrument is actually
+  doing.
+
+Then a master fader, **Flatten** to put everything back at unity, and **Desk in
+circuit** to take the whole thing out and hear it without.
+
+Two things worth knowing. The first is that the desk is *live*: moving a fader
+adjusts the graph that is already running, so you mix while the song goes round
+rather than stopping to mix. Only the reverb is ever rebuilt, and only when its
+size or damping moves.
+
+The second is that the mix travels with the song. It is plain data, like the
+tempo, so playback and the offline renderer build the same desk from it and
+[an exported file](#export-audio) comes out mixed the way you left it. It is
+saved with a [song file](#files) too.
+
+The part switches next to the transport's tempo are a different thing and stay a
+different thing: they leave a part *out of the arrangement*, which is what the
+MIDI and audio exports honour. Muting on the desk only turns it down.
+
 ## Seeds
 
 Every tab has its own seed box, and every generator runs off it, so the same
@@ -600,7 +739,7 @@ left it.
 ## Playing and exporting
 
 The transport at the bottom is shared: tempo, time signature, swing, feel,
-tuning, and which parts sound.
+tuning, [the mix](#mix), and which parts sound.
 Whichever part is longest sets the loop length and the shorter ones repeat to
 fill it, so a two-bar drum pattern keeps playing under a four-bar progression.
 Space bar toggles playback. Everything is synthesised with the Web Audio API —
@@ -633,7 +772,8 @@ once, if four bars is shorter than you wanted.
 
 The render is offline — the whole song is synthesised as fast as the machine
 can manage rather than in real time, through the same voices, the same singer,
-the same humanizer and the same master bus you were listening to. How much faster than
+the same humanizer, the same desk and the same master bus you were listening
+to. How much faster than
 real time depends on how busy the arrangement is and what you are on, but it is
 never slower, and a bar tells you how far along it is.
 
@@ -666,7 +806,7 @@ is not one worth handing to anybody.
 ## Development
 
 ```sh
-npm test                        # 211 unit tests, no dependencies
+npm test                        # 240 unit tests, no dependencies
 npm start                       # serve the app
 npm run taste                   # serve it, recording judgements to data/taste.jsonl
 npm run train                   # fit models/taste.json from data/taste.jsonl
@@ -674,7 +814,7 @@ node tools/build-wordlists.mjs  # regenerate data/words.*.json
 ```
 
 ```
-index.html          markup for all five tabs
+index.html          markup for all six tabs
 styles.css
 src/
   rng.js            seeded randomness — every generator runs off this
@@ -694,7 +834,9 @@ src/
     phonemes.js     spelling to sounds, and what each sound's formants are
     vocal.js        setting a lyric to a tune, and timing the sounds in a note
     sections.js     saved sections and the running order built from them
+    regenerate.js   rolling a section again — all of it, or one part of it
     compose.js      writes a whole song: shape, contrast, variation, bookends
+    mixer.js        the desk: five channels, EQ, compression and one plate
     arrange.js      lays the parts out over the loop, or sections end to end
     midi.js         a small type-1 MIDI writer
     synth.js        the voices, the kit, the singer and the master bus
@@ -704,14 +846,17 @@ src/
     mp4.js          a minimal .m4a container for the browser's AAC frames
     export-audio.js what this browser can write, and which path writes it
     features.js     what a section looks like to a machine: the ~80 numbers
+  library/
+    format.js       the .cutsec and .cutsong formats: writing, reading, checking
+    store.js        the shelf itself — IndexedDB, or the next best thing
   ml/
     net.js          a multilayer perceptron, backward pass included, no deps
     model.js        the taste model: one shared trunk, four heads and a join
     train.js        folds, early stopping, and the held-out number that gates it
     judgements.js   the .jsonl record format — seeds and opinions, no music
     store.js        loading and saving, with or without a server behind it
-  ui/               one module per tab, one for the transport's drawers,
-                    one for the export dialog, plus DOM helpers
+  ui/               one module per tab, one for each of the transport's drawers,
+                    one for the export and regenerate dialogs, plus DOM helpers
   main.js           state, persistence, tabs, transport
 data/
   words.*.json      the dictionaries
