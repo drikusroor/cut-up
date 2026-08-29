@@ -72,7 +72,10 @@ export function initMixer(ctx) {
       input,
       render,
       node: el('label', { class: 'mix-knob' }, [
-        el('span', { class: 'mix-knob-name' }, [label]), input, out,
+        el('span', { class: 'mix-knob-head' }, [
+          el('span', { class: 'mix-knob-name' }, [label]), out,
+        ]),
+        input,
       ]),
     };
   }

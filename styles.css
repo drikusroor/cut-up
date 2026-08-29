@@ -347,10 +347,10 @@ details[open] summary { margin-bottom: 0.5rem; }
   letter-spacing: 0.09em;
   color: var(--accent);
 }
-.section-card.kind-intro { border-left-color: #6f9fc0; }
-.section-card.kind-main { border-left-color: var(--accent); }
-.section-card.kind-bridge { border-left-color: #c9a227; }
-.section-card.kind-outro { border-left-color: #8a7fc0; }
+.section-card.kind-intro, .library-card.kind-intro { border-left-color: #6f9fc0; }
+.section-card.kind-main, .library-card.kind-main { border-left-color: var(--accent); }
+.section-card.kind-bridge, .library-card.kind-bridge { border-left-color: #c9a227; }
+.section-card.kind-outro, .library-card.kind-outro { border-left-color: #8a7fc0; }
 
 .section-head { display: flex; align-items: baseline; gap: 0.5rem; }
 .section-name { font-size: 1.15rem; font-weight: 650; }
@@ -629,10 +629,11 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
 .mix-toggle:hover { color: var(--ink); }
 .mix-mute.is-on { background: var(--accent); border-color: var(--accent); color: var(--paper-ink); }
 .mix-solo.is-on { background: var(--ok); border-color: var(--ok); color: var(--paper-ink); }
-.mix-knob { display: flex; flex-direction: column; gap: 0.05rem; }
-.mix-knob-name { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); }
-.mix-knob input[type="range"] { width: 100%; }
-.mix-knob output { font-size: 0.68rem; color: var(--ink-dim); }
+.mix-knob { display: flex; flex-direction: column; }
+.mix-knob-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.3rem; }
+.mix-knob-name { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); }
+.mix-knob input[type="range"] { width: 100%; margin: 0; }
+.mix-knob output { font-size: 0.66rem; color: var(--ink-dim); }
 .mix-master {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -833,6 +834,7 @@ kbd {
 .sheet > .hint { display: block; margin-bottom: 0.9rem; }
 .sheet > small.hint { margin: -0.4rem 0 0.9rem; }
 .sheet .row.end { justify-content: flex-end; margin-top: 1rem; }
+.sheet #regen-summary { margin-top: 0.6rem; }
 .sheet #export-audio-passes { width: 5rem; }
 
 .export-progress {
