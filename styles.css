@@ -403,7 +403,36 @@ details[open] summary { margin-bottom: 0.5rem; }
 .regen-aspects { display: grid; gap: 0.4rem; margin-bottom: 0.9rem; }
 .regen-aspect { display: grid; gap: 0.1rem; }
 .regen-aspect .hint { margin: 0 0 0 1.5rem; }
+
+/* The key shortcuts, and the same list of moves the composer works from. */
+.key-moves { gap: 0.3rem; margin: 0.5rem 0 0.2rem; }
+.btn.small { padding: 0.2rem 0.5rem; font-size: 0.75rem; }
+
+.regen-variations { display: grid; gap: 0.9rem; margin-bottom: 0.9rem; }
+.regen-group { display: grid; gap: 0.4rem; }
+.regen-group-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 0;
+}
+.regen-variation { display: grid; gap: 0.1rem; }
+.regen-variation .hint { margin: 0 0 0 1.5rem; }
+.regen-variation.is-dial .hint { margin-left: 0; }
+.regen-variation.is-dial input[type="range"] { width: 100%; }
+.regen-variation-label { font-size: 0.85rem; color: var(--ink-dim); }
+.regen-variation-label output { color: var(--accent); }
+.regen-variation.is-unavailable { opacity: 0.4; }
+.regen-variation.is-unavailable .check { cursor: not-allowed; }
 .btn.danger:hover { color: #ff8b73; }
+
+/* The thumbs — see ui/marks.js. Lit means you have already said so. */
+.mark-buttons { display: inline-flex; gap: 0.15rem; }
+.mark-btn { padding: 0.25rem 0.4rem; line-height: 1; filter: grayscale(1); opacity: 0.6; }
+.mark-btn:hover { filter: none; opacity: 1; }
+.mark-btn.is-on { filter: none; opacity: 1; background: #37271f; border-color: var(--accent); }
+.song-mark { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem; }
 
 fieldset.composer { border-color: var(--accent-soft); }
 fieldset.composer > .hint { margin-bottom: 0.2rem; }
@@ -830,11 +859,16 @@ kbd {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
 }
 .sheet::backdrop { background: rgba(8, 8, 6, 0.6); }
+.sheet.narrow { width: min(22rem, calc(100vw - 2rem)); }
+/* The one button in the app that destroys something: it says so in colour. */
+.btn.danger-solid { background: #7a2718; border-color: #a3341f; color: #ffe9e3; font-weight: 600; }
+.btn.danger-solid:hover { background: #93301d; }
 .sheet h2 { font-size: 1.05rem; margin-bottom: 0.35rem; }
 .sheet > .hint { display: block; margin-bottom: 0.9rem; }
 .sheet > small.hint { margin: -0.4rem 0 0.9rem; }
 .sheet .row.end { justify-content: flex-end; margin-top: 1rem; }
 .sheet #regen-summary { margin-top: 0.6rem; }
+.sheet { max-height: calc(100vh - 3rem); overflow-y: auto; }
 .sheet #export-audio-passes { width: 5rem; }
 
 .export-progress {

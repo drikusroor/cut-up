@@ -20,7 +20,8 @@
 
 import { TasteModel, neutralModel } from './model.js';
 import {
-  makeJudgement, mergeJudgements, parseJudgements, serializeJudgements,
+  isMark, makeJudgement, makeMark, markDigest, marksByDigest, mergeJudgements,
+  parseJudgements, serializeJudgements,
 } from './judgements.js';
 import { trainTaste } from './train.js';
 
@@ -104,6 +105,19 @@ export class TasteStore {
     this.committed = [];
     this.pending = [];
     this.ready = false;
+    // Bumped whenever either list changes, so the marks index below can be
+    // built once and then handed out until something actually moves — every
+    // card on the Song and Library tabs asks it a question on every render.
+    this.revision = 0;
+    this.markCache = null;
+  }
+
+  /** Every mark on file, by what it is about. Rebuilt only when it has to be. */
+  get marks() {
+    if (!this.markCache || this.markCache.revision !== this.revision) {
+      this.markCache = { revision: this.revision, index: marksByDigest(this.judgements) };
+    }
+    return this.markCache.index;
   }
 
   get judgements() {
@@ -126,6 +140,7 @@ export class TasteStore {
     // read-only session is pushed through on the way past, so switching from
     // `npm start` to `npm run taste` does not quietly lose an evening.
     this.pending = judgements.pending;
+    this.revision += 1;
     if (this.recording && this.pending.length) await this.flushPending();
     this.ready = true;
     return this;
@@ -140,6 +155,7 @@ export class TasteStore {
       if (!await this.post(record)) stuck.push(record);
     }
     this.pending = stuck;
+    this.revision += 1;
     writePending(stuck);
     if (stranded.length !== stuck.length) {
       this.committed = mergeJudgements(this.committed, stranded.filter((r) => !stuck.includes(r)));
@@ -169,6 +185,7 @@ export class TasteStore {
    */
   async record(spec) {
     const record = makeJudgement(spec);
+    this.revision += 1;
     if (this.recording && await this.post(record)) {
       this.committed = [...this.committed, record];
       return 'saved';
@@ -178,10 +195,76 @@ export class TasteStore {
     return 'browser';
   }
 
+  /**
+   * A thumb, up or down, on music you actually made.
+   *
+   * Goes to the same place a rated round does, and comes back in the same file,
+   * because it is the same kind of thing: an opinion of yours, written down. It
+   * is identified by the music rather than by the moment, so pressing the other
+   * thumb replaces what you said rather than arguing with it — which is why the
+   * pending list is filtered by id on the way past.
+   *
+   * @param {object[]} sections one for a section, the running order for a song
+   * @param {number} rating 0..1 — see MARK_RATINGS
+   * @returns {Promise<'saved'|'browser'>}
+   */
+  async mark(sections, rating, { name = '', digest = '', order = null } = {}) {
+    const record = makeMark({
+      sections, order, rating, name, digest,
+    });
+    this.committed = this.committed.filter((entry) => entry.id !== record.id);
+    this.pending = this.pending.filter((entry) => entry.id !== record.id);
+    this.revision += 1;
+    if (this.recording && await this.post(record)) {
+      this.committed = [...this.committed, record];
+      writePending(this.pending);
+      return 'saved';
+    }
+    this.pending = [...this.pending, record];
+    writePending(this.pending);
+    return 'browser';
+  }
+
+  /**
+   * Takes a mark back, wherever it went.
+   *
+   * With a server there is nothing to erase — the file is append-only on
+   * purpose, and rewriting history in it would break the one property that
+   * makes two machines mergeable — so the record is dropped from this session
+   * and the file keeps the line. Pressing the same thumb twice is the ordinary
+   * way this happens, and it is a small enough lie for a file you can edit.
+   */
+  unmark(sections, order = null) {
+    const id = `mark:${markDigest(sections, order)}`;
+    const before = this.pending.length + this.committed.length;
+    this.pending = this.pending.filter((entry) => entry.id !== id);
+    this.committed = this.committed.filter((entry) => entry.id !== id);
+    this.revision += 1;
+    writePending(this.pending);
+    return before !== this.pending.length + this.committed.length;
+  }
+
+  /**
+   * What you have already said about this music, if anything.
+   *
+   * @returns {number|null} the rating, or null for "you have not said"
+   */
+  markFor(sections, order = null) {
+    if (!sections?.length) return null;
+    const found = this.marks.get(`mark:${markDigest(sections, order)}`);
+    return isMark(found) ? found.rating : null;
+  }
+
+  /** How many of the opinions on file are thumbs rather than rated hands. */
+  get markCount() {
+    return this.marks.size;
+  }
+
   /** Throws away the last thing you said, wherever it went. */
   undo() {
     if (this.pending.length) {
       this.pending = this.pending.slice(0, -1);
+      this.revision += 1;
       writePending(this.pending);
       return true;
     }
@@ -229,6 +312,7 @@ export class TasteStore {
       this.pending = mergeJudgements(this.pending, fresh);
       writePending(this.pending);
     }
+    this.revision += 1;
     return fresh.length;
   }
 }

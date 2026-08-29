@@ -288,6 +288,8 @@ export class TasteModel {
 export function emptyReport() {
   return {
     judgements: 0,
+    // How many of those were thumbs rather than rated hands — see ml/judgements.
+    marks: 0,
     trainedAt: null,
     epochs: 0,
     holdout: { ranking: null, error: null, perHead: {} },

@@ -547,6 +547,7 @@
       <h3 class="section-label">Arrangement</h3>
       <div class="arrangement" id="arrangement-out"></div>
       <small class="hint" id="song-summary"></small>
+      <div class="song-mark" id="song-mark"></div>
     </div>
   </div>
 </section>
@@ -780,6 +781,13 @@
           hand and deals the next. Leave anything you have no view on unanswered — a shrug is
           not a score, and it is better for the model to hear nothing than to hear a guess.
         </p>
+        <p class="hint">
+          This is the thorough way and it is also work. The quick way is the 👍 and 👎 on every
+          section card and every song, on the Song and Library tabs: one click, on music you
+          were already listening to, saying only yes or no. Those go in the same file and count
+          for less — a thumb nudges the model, a rated hand moves it — so you can teach it
+          entirely by working and never open this tab at all.
+        </p>
         <div class="row wrap">
           <button type="button" class="btn primary" id="train-deal">Save and deal again ⏎</button>
           <button type="button" class="btn ghost" id="train-skip">Skip this hand</button>
@@ -835,7 +843,35 @@
     <label class="field grow"><span>Tonic</span><select id="regen-root"></select></label>
     <label class="field grow"><span>Mode</span><select id="regen-scale"></select></label>
   </div>
+  <div class="row wrap key-moves" id="regen-key-moves"></div>
   <small class="hint" id="regen-key-hint"></small>
+
+  <h3 class="section-label">Count</h3>
+  <div class="row">
+    <div class="field inline meter">
+      <span>Time</span>
+      <input type="number" id="regen-meter-beats" min="1" max="16" value="4" aria-label="Beats per bar">
+      <span class="over">/</span>
+      <select id="regen-meter-unit" aria-label="Beat unit">
+        <option value="2">2</option>
+        <option value="4" selected>4</option>
+        <option value="8">8</option>
+        <option value="16">16</option>
+      </select>
+    </div>
+    <button type="button" class="btn ghost" id="regen-meter-reset" title="Put the bar back to the one the section was written in">Leave the bar alone</button>
+  </div>
+  <small class="hint" id="regen-meter-hint"></small>
+
+  <h3 class="section-label">Variations</h3>
+  <p class="hint">
+    The moves the composer makes when it pulls one section away from another — the same list,
+    with the dice taken out of it. What is already true of this section is ticked; the rest are
+    things you can send it off and do. Anything a move disturbs is written again afterwards,
+    whatever the boxes at the top say, because a busier section with the old tune still on it is
+    not busier.
+  </p>
+  <div class="regen-variations" id="regen-variations"></div>
 
   <h3 class="section-label">Seed</h3>
   <div class="row">
@@ -854,6 +890,27 @@
   <div class="row end">
     <button type="button" class="btn ghost" id="regen-close">Close</button>
     <button type="button" class="btn primary" id="regen-go">↻ Regenerate</button>
+  </div>
+</dialog>
+
+<dialog class="sheet narrow" id="ask-dialog" aria-labelledby="ask-title">
+  <h2 id="ask-title">Rename</h2>
+  <p class="hint" id="ask-body"></p>
+  <label class="field"><span id="ask-label">Called</span>
+    <input type="text" id="ask-input" autocomplete="off">
+  </label>
+  <div class="row end">
+    <button type="button" class="btn ghost" id="ask-cancel">Cancel</button>
+    <button type="button" class="btn primary" id="ask-go">Save</button>
+  </div>
+</dialog>
+
+<dialog class="sheet narrow" id="confirm-dialog" aria-labelledby="confirm-title">
+  <h2 id="confirm-title">Are you sure?</h2>
+  <p class="hint" id="confirm-body"></p>
+  <div class="row end">
+    <button type="button" class="btn ghost" id="confirm-cancel">Keep it</button>
+    <button type="button" class="btn danger-solid" id="confirm-go">Delete</button>
   </div>
 </dialog>
 

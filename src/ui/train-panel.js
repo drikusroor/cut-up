@@ -15,13 +15,20 @@
 // Everything on the table is an ordinary section, so any hand that turns out to
 // contain something you actually want can be kept with one button and lands on
 // the Song tab like anything else you saved.
+//
+// This tab is not the only way in, though, and for most people it will not be
+// the main one. The 👍 and 👎 on the Song and Library tabs write to the same
+// file — see ui/marks.js — and this module owns them, because it owns the store
+// they go to. They say much less than a hand does and are weighted to match:
+// the point of them is that teaching the model becomes a side effect of using
+// the app rather than a separate job of work.
 
 import {
   $, download, el, toast,
 } from './dom.js';
 import { dealRound } from '../music/compose.js';
 import { PAIR_HEAD, SECTION_HEADS } from '../ml/model.js';
-import { RATINGS } from '../ml/judgements.js';
+import { MARK_RATINGS, RATINGS } from '../ml/judgements.js';
 import { describeReport } from '../ml/train.js';
 import { TasteStore } from '../ml/store.js';
 import { chordSymbol, keyLabel, keyUsesFlats } from '../music/theory.js';
@@ -276,8 +283,14 @@ export function initTrain(ctx) {
     const stale = store.status === 'stale'
       ? ' · the committed model was fitted against different features and is being ignored until you retrain'
       : '';
-    const count = store.count;
-    ui.verdict.textContent = `${count} ${count === 1 ? 'round' : 'rounds'} on file · ${where}${stale}`;
+    const marked = store.markCount;
+    const dealt = store.count - marked;
+    // Rounds and marks are counted apart, because they are not the same size of
+    // opinion and a single total would make an afternoon of thumbs look like a
+    // fortnight at the table.
+    const tally = `${dealt} ${dealt === 1 ? 'round' : 'rounds'}`
+      + (marked ? ` and ${marked} ${marked === 1 ? 'mark' : 'marks'}` : '');
+    ui.verdict.textContent = `${tally} on file · ${where}${stale}`;
     ui.detail.textContent = describeReport(store.model.report);
   }
 
@@ -303,6 +316,56 @@ export function initTrain(ctx) {
     }
     return undefined;
   }
+
+  // --- marks ----------------------------------------------------------------
+
+  /**
+   * The other way of teaching it, and the one you will actually use.
+   *
+   * The table is the thorough way: five deliberate answers about music you have
+   * never heard, which is the best training data there is and is also twenty
+   * minutes of work. Marks are the opposite trade. A thumb on a section in the
+   * drawer or a song on the shelf is one click on music you were already
+   * listening to for your own reasons, it says only "yes" or "no", and it is
+   * weighted accordingly — see MARK_WEIGHTS. Do it for a month and the model
+   * has heard a few hundred of your actual decisions without you ever having
+   * opened this tab.
+   *
+   * The Song and Library tabs own the buttons; this owns the store, so this is
+   * where the answer goes.
+   */
+  const marks = {
+    /** What you already said about this music, or null. */
+    of: (sections, order) => (store.ready ? store.markFor(sections, order) : null),
+
+    /**
+     * Says it, or takes it back — pressing the thumb that is already lit is how
+     * you change your mind back to having no opinion, which is a thing the model
+     * has to be able to be told.
+     */
+    async set(sections, rating, { name = '', digest = '', order = null } = {}) {
+      if (!sections?.length) return null;
+      const already = store.markFor(sections, order);
+      if (already === rating) {
+        store.unmark(sections, order);
+        renderStatus();
+        ctx.onMarksChange?.();
+        toast(`${name || 'That'} — no opinion either way`);
+        return null;
+      }
+      const where = await store.mark(sections, rating, { name, digest, order });
+      renderStatus();
+      ctx.onMarksChange?.();
+      const said = rating >= 0.5 ? 'Good' : 'Not that';
+      toast(where === 'saved'
+        ? `${said} — written to data/taste.jsonl`
+        : `${said} — kept in this browser until you export it`);
+      return rating;
+    },
+
+    /** For the thumbs to draw themselves the right way round. */
+    ratings: MARK_RATINGS,
+  };
 
   // --- wiring ---------------------------------------------------------------
 
@@ -372,6 +435,9 @@ export function initTrain(ctx) {
   store.load().then(() => {
     renderStatus();
     ctx.onTasteChange?.(store.model);
+    // The thumbs on the other tabs cannot know what you have already said until
+    // the file has been read, so they are drawn again once it has.
+    ctx.onMarksChange?.();
   });
   render();
   renderStatus();
@@ -380,6 +446,8 @@ export function initTrain(ctx) {
     deal,
     /** The Song tab asks for this every time it composes. */
     model: () => store.model,
+    /** And the Song and Library tabs put their thumbs through this. */
+    marks,
     refresh: () => {
       if (!hand) deal();
       renderStatus();
