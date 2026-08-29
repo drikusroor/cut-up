@@ -8,6 +8,7 @@ import { initSong } from './ui/song-panel.js';
 import { initFeel } from './ui/feel-panel.js';
 import { initTrain } from './ui/train-panel.js';
 import { initExportAudio } from './ui/export-panel.js';
+import { initLibrary } from './ui/library-panel.js';
 import { AudioEngine } from './music/audio.js';
 import { songToMidi } from './music/midi.js';
 import { buildSongPlan, clockTime, planSeconds } from './music/sections.js';
@@ -18,6 +19,8 @@ import { defaultVocal, normalizeVocal, singMelody } from './music/vocal.js';
 import { DEFAULT_METER, meterInfo, normalizeMeter } from './music/meter.js';
 import { defaultHumanize, normalizeHumanize } from './music/humanize.js';
 import { defaultTuning, normalizeTuning } from './music/tuning.js';
+import { defaultMix, normalizeMix } from './music/mixer.js';
+import { initMixer } from './ui/mixer-panel.js';
 import { randomSeed } from './rng.js';
 
 const STORAGE_KEY = 'cut-up:v1';
@@ -32,6 +35,8 @@ function defaultState() {
     meter: { ...DEFAULT_METER },
     feel: defaultHumanize(),
     tuning: defaultTuning(),
+    // The desk: a fader, a pan, an EQ, a reverb send and a compressor per part.
+    mix: defaultMix(),
     parts: {
       chords: true, melody: true, bass: true, drums: true, vocal: true,
     },
@@ -143,6 +148,7 @@ function loadState() {
       meter: normalizeMeter(stored.meter || base.meter),
       feel: normalizeHumanize(stored.feel || base.feel),
       tuning: normalizeTuning(stored.tuning || base.tuning),
+      mix: normalizeMix(stored.mix || base.mix),
       sections: Array.isArray(stored.sections) ? stored.sections : [],
       arrangement: Array.isArray(stored.arrangement) ? stored.arrangement : [],
       compose: normalizeComposeSettings(stored.compose || base.compose),
@@ -194,13 +200,17 @@ const ctx = {
     audio.setFeel(state.feel);
     audio.setTuning(state.tuning, state.music.rootPc);
   },
+  // And what desk it is coming through. Unlike the rest, this one is applied to
+  // the graph that is already running, so a fader can be moved mid-song.
+  syncMix: () => audio.setMix(state.mix),
 };
 ctx.syncInstruments();
 ctx.syncFeel();
+ctx.syncMix();
 
 // --- panels -----------------------------------------------------------------
 
-initWords(ctx);
+const wordsPanel = initWords(ctx);
 const chordsPanel = initChords(ctx);
 // The bass is written against the drums, so a new pattern is a new bass line.
 // It has to be hooked up before the Rhythm tab boots, because booting it
@@ -211,6 +221,23 @@ ctx.onRhythmChange = () => chordsPanel.rebuildBass();
 ctx.onWordsChange = () => chordsPanel.refreshVocal();
 const rhythmPanel = initRhythm(ctx);
 const songPanel = initSong(ctx, { chords: chordsPanel, rhythm: rhythmPanel });
+
+/**
+ * A whole song was poured over the state — opened from the library, or read
+ * out of a file. Nothing is regenerated: every panel is simply told to read
+ * the state it is now sitting on.
+ */
+ctx.applyLoadedSong = () => {
+  chordsPanel.applyState();
+  rhythmPanel.applyState();
+  songPanel.render();
+  ctx.syncInstruments();
+  ctx.syncFeel();
+  ctx.syncMix();
+  ctx.onTransportChange?.();
+  ctx.onVocalChange?.();
+  showTab('song');
+};
 
 // The Voice box is on the Chords tab and mirrored in the composer on the Song
 // tab. Whichever one is thrown, both are told to read the state again.
@@ -229,6 +256,11 @@ ctx.onMeterChange = () => {
   ctx.refreshPlayback?.();
 };
 const feelPanel = initFeel(ctx);
+const mixerPanel = initMixer(ctx);
+// The shelf that outlives the tab: saved songs, saved sections, and the files
+// they can be written out as.
+const libraryPanel = initLibrary(ctx, { song: songPanel, words: wordsPanel });
+ctx.library = libraryPanel;
 // The Train tab needs the Song tab to exist first: keeping a hand puts sections
 // on the shelf, and composing asks it for the model.
 const trainPanel = initTrain(ctx);
@@ -259,6 +291,7 @@ function showTab(name) {
   if (name === 'chords') chordsPanel.redraw();
   if (name === 'song') songPanel.render();
   if (name === 'train') trainPanel.refresh();
+  if (name === 'library') ctx.library?.refresh();
   renderPlayScope();
   save();
 }
@@ -371,6 +404,8 @@ function buildSong({
     meter: state.meter,
     feel: state.feel,
     tuning: state.tuning,
+    // The desk travels with the song, so an export is the mix you approved.
+    mix: state.mix,
     parts: state.parts,
     loop: true,
     // A jump into the middle of the pass — see AudioEngine.play.
@@ -487,6 +522,7 @@ function renderPlayScope() {
 ctx.onTransportChange = () => {
   tempoInput.value = String(state.tempo);
   feelPanel.applyState();
+  mixerPanel.applyState();
   renderPlayScope();
   save();
   ctx.refreshPlayback?.();
@@ -543,6 +579,7 @@ ctx.playCards = (sections, { tempo, meter } = {}) => {
     meter: meter || state.meter,
     feel: state.feel,
     tuning: state.tuning,
+    mix: state.mix,
     parts: state.parts,
     loop: true,
   });

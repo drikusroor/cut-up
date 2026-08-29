@@ -82,6 +82,9 @@ export async function renderSong(song, {
   synth.setInstruments(song.instruments || {});
   synth.setFeel(song.feel);
   synth.setTuning(song.tuning, song.rootPc ?? 0);
+  // The same desk the transport plays through, so a bounce comes out mixed the
+  // way you left it rather than flat.
+  synth.setMix(song.mix);
 
   const { events, clock } = songEvents(synth, song);
   // A loop exported twice round is the same list of events twice over, an

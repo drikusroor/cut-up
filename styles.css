@@ -347,10 +347,10 @@ details[open] summary { margin-bottom: 0.5rem; }
   letter-spacing: 0.09em;
   color: var(--accent);
 }
-.section-card.kind-intro { border-left-color: #6f9fc0; }
-.section-card.kind-main { border-left-color: var(--accent); }
-.section-card.kind-bridge { border-left-color: #c9a227; }
-.section-card.kind-outro { border-left-color: #8a7fc0; }
+.section-card.kind-intro, .library-card.kind-intro { border-left-color: #6f9fc0; }
+.section-card.kind-main, .library-card.kind-main { border-left-color: var(--accent); }
+.section-card.kind-bridge, .library-card.kind-bridge { border-left-color: #c9a227; }
+.section-card.kind-outro, .library-card.kind-outro { border-left-color: #8a7fc0; }
 
 .section-head { display: flex; align-items: baseline; gap: 0.5rem; }
 .section-name { font-size: 1.15rem; font-weight: 650; }
@@ -377,6 +377,32 @@ details[open] summary { margin-bottom: 0.5rem; }
 }
 .section-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
 .section-actions .btn { padding: 0.25rem 0.5rem; font-size: 0.78rem; }
+
+/* A button with two halves: the whole job on the left, the choice of job on
+   the right. They read as one control, so they are drawn as one. */
+.split-btn { display: inline-flex; }
+.split-btn .btn { border-radius: 0; }
+.split-btn .split-main { border-top-left-radius: var(--radius); border-bottom-left-radius: var(--radius); }
+.split-btn .split-more {
+  border-top-right-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+  border-left-width: 0;
+  padding-left: 0.35rem;
+  padding-right: 0.35rem;
+}
+.split-btn .split-more::before {
+  content: "";
+  display: block;
+  position: absolute;
+  inset: 0.25rem auto 0.25rem 0;
+  border-left: 1px solid var(--line);
+}
+.split-btn .split-more { position: relative; }
+
+/* One row per aspect in the regenerate dialog: the tick, and what it costs. */
+.regen-aspects { display: grid; gap: 0.4rem; margin-bottom: 0.9rem; }
+.regen-aspect { display: grid; gap: 0.1rem; }
+.regen-aspect .hint { margin: 0 0 0 1.5rem; }
 .btn.danger:hover { color: #ff8b73; }
 
 fieldset.composer { border-color: var(--accent-soft); }
@@ -565,6 +591,80 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
 .feel-parts input[type="range"] { width: 100%; }
 .feel-parts output { font-size: 0.68rem; }
 
+/* The mixing desk. Wider than the other drawers, because five strips side by
+   side is the only layout in which a desk reads as a desk. */
+.drawer-body.wide { width: min(46rem, calc(100vw - 2rem)); }
+
+.mix-strips {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+}
+.mix-strips.is-off { opacity: 0.45; }
+.mix-strip {
+  background: var(--bg-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.mix-strip.is-silent { opacity: 0.42; }
+.mix-head { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; }
+.mix-name { font-size: 0.78rem; color: var(--ink-dim); }
+.mix-buttons { display: flex; gap: 0.2rem; }
+.mix-toggle {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-faint);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.65rem;
+  line-height: 1;
+  padding: 0.2rem 0.3rem;
+  cursor: pointer;
+}
+.mix-toggle:hover { color: var(--ink); }
+.mix-mute.is-on { background: var(--accent); border-color: var(--accent); color: var(--paper-ink); }
+.mix-solo.is-on { background: var(--ok); border-color: var(--ok); color: var(--paper-ink); }
+.mix-knob { display: flex; flex-direction: column; }
+.mix-knob-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.3rem; }
+.mix-knob-name { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); }
+.mix-knob input[type="range"] { width: 100%; margin: 0; }
+.mix-knob output { font-size: 0.66rem; color: var(--ink-dim); }
+.mix-master {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem 0.9rem;
+  margin-bottom: 0.6rem;
+}
+
+@media (max-width: 640px) {
+  .mix-strips { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mix-master { grid-template-columns: 1fr; }
+}
+
+/* The library shelves. Cards rather than rows, because what you are looking
+   for is "the one with those chords" rather than a file name. */
+.library-shelf { display: grid; gap: 0.5rem; margin-bottom: 1.2rem; }
+.library-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  padding: 0.55rem 0.7rem;
+  display: grid;
+  gap: 0.25rem;
+}
+.library-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.library-name { font-weight: 600; }
+.library-when { font-size: 0.72rem; color: var(--ink-faint); }
+.library-meta { font-size: 0.78rem; color: var(--ink-dim); }
+.section-label .count { color: var(--ink-faint); font-weight: 400; }
+#panel-library.is-dropping { outline: 2px dashed var(--accent-soft); outline-offset: -0.5rem; }
+
 .colophon {
   padding: 2rem clamp(1rem, 4vw, 2.5rem) 1rem;
   color: var(--ink-faint);
@@ -734,6 +834,7 @@ kbd {
 .sheet > .hint { display: block; margin-bottom: 0.9rem; }
 .sheet > small.hint { margin: -0.4rem 0 0.9rem; }
 .sheet .row.end { justify-content: flex-end; margin-top: 1rem; }
+.sheet #regen-summary { margin-top: 0.6rem; }
 .sheet #export-audio-passes { width: 5rem; }
 
 .export-progress {

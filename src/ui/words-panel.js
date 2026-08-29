@@ -250,4 +250,27 @@ export function initWords(ctx) {
   refreshDictionary().then(() => {
     if (!w.output.length) generate({ keepSeed: true });
   });
+
+  return {
+    /**
+     * Re-reads state.words after a whole song has been loaded over it. Nothing
+     * is cut up again — the lines that came with the song are the lines it was
+     * written to, so they are shown rather than replaced.
+     */
+    applyState() {
+      ui.lang.value = w.lang;
+      ui.text.value = w.text;
+      ui.text2.value = w.secondText;
+      ui.seed.value = w.seed;
+      $('#capitalize').checked = w.capitalize;
+      for (const id of [...numbers, ...sliders]) {
+        const input = $(`#${id}`);
+        if (input) input.value = w[id];
+      }
+      for (const id of sliders) $(`#${id}`).dispatchEvent(new Event('input'));
+      syncMethod();
+      renderKeepers();
+      if (w.output.length) renderLines();
+    },
+  };
 }

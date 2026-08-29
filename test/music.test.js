@@ -1750,7 +1750,11 @@ function countingContext() {
     resume: async () => {},
     createGain: () => node({ gain: param() }),
     createBiquadFilter: () => node({ frequency: param(), Q: param(), type: 'lowpass' }),
-    createDynamicsCompressor: () => node({ threshold: param(), ratio: param() }),
+    createDynamicsCompressor: () => node({
+      threshold: param(), ratio: param(), knee: param(), attack: param(), release: param(),
+    }),
+    createStereoPanner: () => node({ pan: param() }),
+    createConvolver: () => node({ buffer: null }),
     createOscillator: () => source({ frequency: param(), detune: param(), type: 'sine' }),
     createBufferSource: () => source({ buffer: null }),
     createBuffer: (channels, length) => ({ getChannelData: () => new Float32Array(length) }),

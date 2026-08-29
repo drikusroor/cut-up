@@ -395,7 +395,11 @@ function fakeContext() {
     resume: async () => {},
     createGain: () => node('gain', { gain: param() }),
     createBiquadFilter: () => node('filter', { frequency: param(), Q: param(), type: 'lowpass' }),
-    createDynamicsCompressor: () => node('comp', { threshold: param(), ratio: param() }),
+    createDynamicsCompressor: () => node('comp', {
+      threshold: param(), ratio: param(), knee: param(), attack: param(), release: param(),
+    }),
+    createStereoPanner: () => node('panner', { pan: param() }),
+    createConvolver: () => node('convolver', { buffer: null }),
     createWaveShaper: () => node('shaper', { curve: null, oversample: 'none' }),
     createOscillator: () => source('osc', { frequency: param(), detune: param(), type: 'sine' }),
     createBufferSource: () => source('buffer', { buffer: null, loop: false }),

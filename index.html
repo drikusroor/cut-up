@@ -23,6 +23,7 @@
     <button class="tab" role="tab" aria-selected="false" data-tab="chords">Chords &amp; melody</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="rhythm">Rhythm</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="song">Song</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="library">Library</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="train">Train</button>
   </nav>
 </header>
@@ -529,6 +530,7 @@
           <button type="button" class="btn ghost" id="next-section" title="Jump to the next section">Next section ⏭</button>
         </div>
         <div class="row wrap">
+          <button type="button" class="btn ghost" id="save-song-library" title="Keep the whole thing — sections, running order, mix and words — on the Library tab">💾 Save to library</button>
           <button type="button" class="btn ghost" id="autofill-song" title="Intro, every section in order, outro">Auto-arrange</button>
           <button type="button" class="btn ghost" id="clear-song">Clear</button>
         </div>
@@ -545,6 +547,63 @@
       <h3 class="section-label">Arrangement</h3>
       <div class="arrangement" id="arrangement-out"></div>
       <small class="hint" id="song-summary"></small>
+    </div>
+  </div>
+</section>
+
+<section class="panel" id="panel-library" role="tabpanel" aria-label="Library" hidden>
+  <div class="layout">
+
+    <div class="controls">
+      <fieldset>
+        <legend>This song</legend>
+        <p class="hint">
+          A saved song is the whole desk: every section, the running order, the tempo, the time
+          signature, the feel, the tuning, the mix and the words it was cut up from. Opening one
+          puts you back where you were rather than merely playing you something.
+        </p>
+        <label class="field"><span>Called</span>
+          <input type="text" id="library-song-name" placeholder="Untitled">
+        </label>
+        <div class="row wrap">
+          <button type="button" class="btn primary" id="library-save-song">💾 Save the song</button>
+          <button type="button" class="btn ghost" id="library-export-song" title="Write it out as a file you can send">⤓ Export a .cutsong</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Sections</legend>
+        <p class="hint">
+          A section on the shelf is a loose idea — a chorus that works, a pattern you keep coming
+          back to — ready to drop into something else. Every card on the Song tab has a 📚 button
+          that files it here.
+        </p>
+        <div class="row wrap">
+          <button type="button" class="btn" id="library-save-section" title="File the section you have open">📚 File the open section</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Files</legend>
+        <p class="hint">
+          <code>.cutsong</code> and <code>.cutsec</code> files are plain JSON with a header on the
+          front. Mail one to somebody, keep one in a repository next to the lyrics, or drop one
+          anywhere on this tab to read it back in.
+        </p>
+        <div class="row wrap">
+          <button type="button" class="btn" id="library-import">⤒ Open a file</button>
+          <input type="file" id="library-import-file" accept=".cutsec,.cutsong,.json" multiple hidden>
+        </div>
+        <small class="hint" id="library-status"></small>
+      </fieldset>
+    </div>
+
+    <div class="output">
+      <h3 class="section-label">Saved songs <span class="count" id="library-song-count"></span></h3>
+      <div class="library-shelf" id="library-songs" aria-live="polite"></div>
+
+      <h3 class="section-label">Saved sections <span class="count" id="library-section-count"></span></h3>
+      <div class="library-shelf" id="library-sections"></div>
     </div>
   </div>
 </section>
@@ -581,6 +640,44 @@
   </div>
 
   <div class="drawers">
+  <details class="drawer" id="mixer-drawer">
+    <summary class="btn ghost" title="Level, pan, EQ, reverb and compression per part">🎛 Mix</summary>
+    <div class="drawer-body wide">
+      <h3 class="section-label">The desk</h3>
+      <p class="hint">
+        Five channels — the tune, the voice on it, the chords, the bass and the kit — each with a
+        fader, a pan, a three-band EQ, a squeeze and a send to one shared plate. Everything moves
+        while the song is playing, and the mix travels with the song: an exported file comes out
+        the way you left it here.
+      </p>
+      <div class="mix-strips" id="mixer-strips"></div>
+      <div class="mix-master">
+        <label class="field slider">
+          <span>Master <output id="out-mixer-master"></output></span>
+          <input type="range" id="mixer-master" min="0" max="2" step="0.01" value="1">
+        </label>
+        <label class="field slider">
+          <span>Reverb size <output id="out-mixer-reverb-size"></output></span>
+          <input type="range" id="mixer-reverb-size" min="0" max="1" step="0.05" value="0.4">
+        </label>
+        <label class="field slider">
+          <span>Reverb damping <output id="out-mixer-reverb-damp"></output></span>
+          <input type="range" id="mixer-reverb-damp" min="0" max="1" step="0.05" value="0.5">
+        </label>
+      </div>
+      <div class="row wrap">
+        <label class="check"><input type="checkbox" id="mixer-on" checked> Desk in circuit</label>
+        <button type="button" class="btn ghost" id="mixer-reset" title="Every fader back to unity">Flatten</button>
+        <small class="hint" id="mixer-summary"></small>
+      </div>
+      <small class="hint">
+        The transport's part switches above leave a part out of the arrangement altogether;
+        muting it here only turns it down. Soloing is the quickest way to hear what one
+        instrument is actually doing.
+      </small>
+    </div>
+  </details>
+
   <details class="drawer" id="feel-drawer">
     <summary class="btn ghost" title="How tight the playing is">🫀 Feel</summary>
     <div class="drawer-body">
@@ -725,6 +822,40 @@
 
   </div>
 </section>
+
+<dialog class="sheet" id="regenerate-dialog" aria-labelledby="regenerate-title">
+  <h2 id="regenerate-title">Roll it again</h2>
+  <p class="hint" id="regen-scope"></p>
+
+  <h3 class="section-label">What to roll</h3>
+  <div class="regen-aspects" id="regen-aspects"></div>
+
+  <h3 class="section-label">Key</h3>
+  <div class="row">
+    <label class="field grow"><span>Tonic</span><select id="regen-root"></select></label>
+    <label class="field grow"><span>Mode</span><select id="regen-scale"></select></label>
+  </div>
+  <small class="hint" id="regen-key-hint"></small>
+
+  <h3 class="section-label">Seed</h3>
+  <div class="row">
+    <input type="text" id="regen-seed" class="grow" placeholder="Empty means surprise me" aria-label="Regeneration seed">
+    <button type="button" class="btn ghost" id="regen-new-seed" title="A different roll">🎲</button>
+  </div>
+  <small class="hint">
+    With a seed written in, the same section rolled again with the same seed comes out the same
+    way twice — so a take you liked can be got back after you have rolled past it.
+  </small>
+
+  <label class="check"><input type="checkbox" id="regen-fork"> Leave the original alone and file the result as a new section</label>
+
+  <small class="hint" id="regen-summary"></small>
+
+  <div class="row end">
+    <button type="button" class="btn ghost" id="regen-close">Close</button>
+    <button type="button" class="btn primary" id="regen-go">↻ Regenerate</button>
+  </div>
+</dialog>
 
 <dialog class="sheet" id="export-audio-dialog" aria-labelledby="export-audio-title">
   <h2 id="export-audio-title">Export audio</h2>
