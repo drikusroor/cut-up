@@ -32,7 +32,7 @@ import {
   diatonicChord, generateProgression, getScale, keyLabel, voiceProgression,
 } from './theory.js';
 import { applyMelodyEdits, emptyMelodyEdits, generateMelody } from './melody.js';
-import { normalizeVocal } from './vocal.js';
+import { dealLyric, normalizeVocal } from './vocal.js';
 import { generateBass } from './bass.js';
 import { generateRhythm, randomKitPieces } from './rhythm.js';
 import { DEFAULT_METER, meterInfo, normalizeMeter } from './meter.js';
@@ -1085,16 +1085,11 @@ export function composeSong(options = {}) {
   // chorus sing different lines, and a song longer than the lyric comes round
   // again — which is what a chorus is.
   const vocal = normalizeVocal(options.vocal);
-  const chunk = vocal.lines.length
-    ? Math.max(1, Math.ceil(vocal.lines.length / Math.max(1, heard.length)))
-    : 1;
   heard.forEach((index, order) => {
     byspec.set(index, sections.length);
     sections.push(renderSection(specs[index], {
       seed,
-      vocal: vocal.on && vocal.lines.length
-        ? { ...vocal, lines: rotate(vocal.lines, order * chunk) }
-        : null,
+      vocal: vocal.on && vocal.lines.length ? dealLyric(vocal, order, heard.length) : null,
     }));
   });
   const arrangement = blocks.map((block) => {
@@ -1342,13 +1337,6 @@ function renderSection(spec, { seed, vocal = null }) {
     tempoScale: round(spec.tempoScale),
     traits: spec.traits,
   });
-}
-
-/** The same lines, starting from a different one. */
-function rotate(lines, by) {
-  if (!lines.length) return [];
-  const at = ((by % lines.length) + lines.length) % lines.length;
-  return [...lines.slice(at), ...lines.slice(0, at)];
 }
 
 /** Sliders are stored to two places; a long float in a control reads as noise. */
