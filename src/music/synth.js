@@ -15,6 +15,7 @@ import { defaultHumanize } from './humanize.js';
 import { phoneInfo } from './phonemes.js';
 import { phoneSchedule, vocalMode, vocalVoice } from './vocal.js';
 import { defaultTuning, noteCents } from './tuning.js';
+import { defaultMix, MixerRig } from './mixer.js';
 
 /**
  * How each kit piece is made. `kind` picks the renderer:
@@ -118,6 +119,11 @@ export class Synth {
     this.feel = defaultHumanize();
     this.tuning = defaultTuning();
     this.rootPc = 0;
+    // The desk every part is played through — see mixer.js. It is built the
+    // first time a note asks for a channel, because a synth may not have a
+    // context yet when it is told what the mix is.
+    this.mix = defaultMix();
+    this.rig = null;
   }
 
 
@@ -139,6 +145,31 @@ export class Synth {
   setTuning(tuning, rootPc = 0) {
     this.tuning = tuning || defaultTuning();
     this.rootPc = rootPc;
+  }
+
+  /**
+   * The mixing desk. Moving a fader adjusts the graph that is already running
+   * rather than building a new one, so a slider can be dragged mid-song
+   * without the song clicking or restarting.
+   */
+  setMix(mix) {
+    this.mix = mix || defaultMix();
+    if (this.rig && this.rig.ctx === this.ctx) this.rig.apply(this.mix);
+    else this.rig = null;
+  }
+
+  /**
+   * Where a part's notes go in: its channel on the desk, or straight to the
+   * master bus if there is no context to build a desk in yet.
+   *
+   * @param {'melody'|'vocal'|'chords'|'bass'|'drums'} part
+   */
+  bus(part) {
+    if (!this.ctx || !this.master) return this.master;
+    if (!this.rig || this.rig.ctx !== this.ctx || this.rig.destination !== this.master) {
+      this.rig = new MixerRig(this.ctx, this.master, this.mix);
+    }
+    return this.rig.input(part);
   }
 
   /**
@@ -314,7 +345,9 @@ export class Synth {
     const carrierIn = ctx.createGain();
     const out = ctx.createGain();
     out.gain.value = 1.5;
-    out.connect(this.master);
+    // The vocoder is the voice, so it comes out on the voice's channel — the
+    // fader that says "Voice" moves the talk box as well as the plain singer.
+    out.connect(this.bus('vocal'));
 
     // Rectification: |x|. Turning a waveform into its own outline is the whole
     // of an envelope follower, once a lowpass has taken the ripple off.
@@ -411,7 +444,7 @@ export class Synth {
     const tail = end + 0.3;
     const freq = mtof(note.midi);
 
-    const destination = vocoded ? this.vocalRig().modIn : this.master;
+    const destination = vocoded ? this.vocalRig().modIn : (opts.destination || this.master);
     // A vocoder throws its modulator's pitch away, so the speech is spoken on
     // one note and only the carrier knows what the tune is.
     const pitch = vocoded ? SPEECH_HZ : freq;
@@ -598,8 +631,10 @@ export class Synth {
    * @param {number} time
    * @param {number} gain
    * @param {string} [kitId]
+   * @param {AudioNode} [destination] where it comes out; the master bus unless
+   *   the desk has a channel for the kit
    */
-  drum(id, time, gain = 0.6, kitId = this.instruments.kit) {
+  drum(id, time, gain = 0.6, kitId = this.instruments.kit, destination = null) {
     const ctx = this.ctx;
     const spec = DRUM_VOICES[id];
     if (!spec) return;
@@ -609,12 +644,13 @@ export class Synth {
     const tune = (hz) => hz * (kit.pitch ?? 1);
 
     // A kit-wide lid, so "tape" and "cardboard" are dull all the way through.
-    let bus = this.master;
+    const out = destination || this.master;
+    let bus = out;
     if (kit.lowpass) {
       const lid = ctx.createBiquadFilter();
       lid.type = 'lowpass';
       lid.frequency.value = kit.lowpass;
-      lid.connect(this.master);
+      lid.connect(out);
       bus = lid;
     }
 

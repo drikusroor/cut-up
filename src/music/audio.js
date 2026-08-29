@@ -171,6 +171,8 @@ export function songEvents(synth, song) {
             // softer than the one before it and a coda can fade.
             ((chord.velocity ?? 80) / 127) * 0.254,
             centsOf('harmony', { midi, step: chord.step, rootPc: chord.rootPc }),
+            // Every part arrives on its own channel of the desk — see mixer.js.
+            synth.bus('chords'),
           );
         }),
       });
@@ -186,6 +188,7 @@ export function songEvents(synth, song) {
           spec, note.midi, time, duration,
           ((note.velocity ?? 96) / 127) * 0.28,
           centsOf('lead', note),
+          synth.bus('melody'),
         ),
       });
     }
@@ -208,7 +211,9 @@ export function songEvents(synth, song) {
           note, time, duration,
           ((note.velocity ?? 96) / 127) * 0.34 * settings.level,
           centsOf('lead', note),
-          { voice: settings.voice, mode: settings.mode, lead },
+          {
+            voice: settings.voice, mode: settings.mode, lead, destination: synth.bus('vocal'),
+          },
         ),
       });
     }
@@ -225,6 +230,7 @@ export function songEvents(synth, song) {
           spec, note.midi, time, duration,
           ((note.velocity ?? 100) / 127) * 0.26,
           centsOf('bass', note),
+          synth.bus('bass'),
         ),
       });
     }
@@ -237,7 +243,7 @@ export function songEvents(synth, song) {
         // Salted with the piece, so a drummer who drags can drag the snare
         // without dragging the hat that lands on the same step.
         at: nudged('drums', hit.step, hit.id),
-        play: (time) => synth.drum(hit.id, time, gain, kit),
+        play: (time) => synth.drum(hit.id, time, gain, kit, synth.bus('drums')),
       });
     }
   }
@@ -319,6 +325,9 @@ export class AudioEngine extends Synth {
   play(song) {
     this.stop();
     const ctx = this.ensure();
+    // A song carries the desk it was mixed on, so playing one is playing it
+    // mixed — and so is the file rendered from the same object.
+    if (song.mix) this.setMix(song.mix);
     const { loop = true } = song;
     const { events, clock } = songEvents(this, song);
 
@@ -410,6 +419,7 @@ export class AudioEngine extends Synth {
       1.1,
       0.18,
       this.previewCents('harmony', midi),
+      this.bus('chords'),
     ));
   }
 
@@ -419,8 +429,12 @@ export class AudioEngine extends Synth {
   } = {}) {
     this.ensure();
     const time = this.ctx.currentTime + 0.03;
+    // A preview goes through the same channel the part plays on, so auditioning
+    // an instrument on a muted channel does not leave you clicking in silence
+    // wondering what is broken.
+    const channel = { lead: 'melody', harmony: 'chords', bass: 'bass' }[part] || 'melody';
     midis.forEach((midi, i) => this.voice(
-      spec, midi, time + i * gap, length, gain, this.previewCents(part, midi),
+      spec, midi, time + i * gap, length, gain, this.previewCents(part, midi), this.bus(channel),
     ));
   }
 
@@ -436,7 +450,7 @@ export class AudioEngine extends Synth {
         note.length * 0.34,
         0.24,
         0,
-        opts,
+        { ...opts, destination: this.bus('vocal') },
       );
     }
   }
@@ -451,12 +465,13 @@ export class AudioEngine extends Synth {
       0.18,
       0.16,
       this.previewCents('lead', midi),
+      this.bus('melody'),
     );
   }
 
   /** One kit piece on its own, so switching kits is worth doing by ear. */
   previewDrum(id, kitId = this.instruments.kit) {
     this.ensure();
-    this.drum(id, this.ctx.currentTime + 0.01, 0.6, kitId);
+    this.drum(id, this.ctx.currentTime + 0.01, 0.6, kitId, this.bus('drums'));
   }
 }

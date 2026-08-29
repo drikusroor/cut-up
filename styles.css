@@ -565,6 +565,60 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
 .feel-parts input[type="range"] { width: 100%; }
 .feel-parts output { font-size: 0.68rem; }
 
+/* The mixing desk. Wider than the other drawers, because five strips side by
+   side is the only layout in which a desk reads as a desk. */
+.drawer-body.wide { width: min(46rem, calc(100vw - 2rem)); }
+
+.mix-strips {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+}
+.mix-strips.is-off { opacity: 0.45; }
+.mix-strip {
+  background: var(--bg-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.mix-strip.is-silent { opacity: 0.42; }
+.mix-head { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; }
+.mix-name { font-size: 0.78rem; color: var(--ink-dim); }
+.mix-buttons { display: flex; gap: 0.2rem; }
+.mix-toggle {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-faint);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.65rem;
+  line-height: 1;
+  padding: 0.2rem 0.3rem;
+  cursor: pointer;
+}
+.mix-toggle:hover { color: var(--ink); }
+.mix-mute.is-on { background: var(--accent); border-color: var(--accent); color: var(--paper-ink); }
+.mix-solo.is-on { background: var(--ok); border-color: var(--ok); color: var(--paper-ink); }
+.mix-knob { display: flex; flex-direction: column; gap: 0.05rem; }
+.mix-knob-name { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); }
+.mix-knob input[type="range"] { width: 100%; }
+.mix-knob output { font-size: 0.68rem; color: var(--ink-dim); }
+.mix-master {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem 0.9rem;
+  margin-bottom: 0.6rem;
+}
+
+@media (max-width: 640px) {
+  .mix-strips { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mix-master { grid-template-columns: 1fr; }
+}
+
 .colophon {
   padding: 2rem clamp(1rem, 4vw, 2.5rem) 1rem;
   color: var(--ink-faint);

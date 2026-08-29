@@ -581,6 +581,44 @@
   </div>
 
   <div class="drawers">
+  <details class="drawer" id="mixer-drawer">
+    <summary class="btn ghost" title="Level, pan, EQ, reverb and compression per part">🎛 Mix</summary>
+    <div class="drawer-body wide">
+      <h3 class="section-label">The desk</h3>
+      <p class="hint">
+        Five channels — the tune, the voice on it, the chords, the bass and the kit — each with a
+        fader, a pan, a three-band EQ, a squeeze and a send to one shared plate. Everything moves
+        while the song is playing, and the mix travels with the song: an exported file comes out
+        the way you left it here.
+      </p>
+      <div class="mix-strips" id="mixer-strips"></div>
+      <div class="mix-master">
+        <label class="field slider">
+          <span>Master <output id="out-mixer-master"></output></span>
+          <input type="range" id="mixer-master" min="0" max="2" step="0.01" value="1">
+        </label>
+        <label class="field slider">
+          <span>Reverb size <output id="out-mixer-reverb-size"></output></span>
+          <input type="range" id="mixer-reverb-size" min="0" max="1" step="0.05" value="0.4">
+        </label>
+        <label class="field slider">
+          <span>Reverb damping <output id="out-mixer-reverb-damp"></output></span>
+          <input type="range" id="mixer-reverb-damp" min="0" max="1" step="0.05" value="0.5">
+        </label>
+      </div>
+      <div class="row wrap">
+        <label class="check"><input type="checkbox" id="mixer-on" checked> Desk in circuit</label>
+        <button type="button" class="btn ghost" id="mixer-reset" title="Every fader back to unity">Flatten</button>
+        <small class="hint" id="mixer-summary"></small>
+      </div>
+      <small class="hint">
+        The transport's part switches above leave a part out of the arrangement altogether;
+        muting it here only turns it down. Soloing is the quickest way to hear what one
+        instrument is actually doing.
+      </small>
+    </div>
+  </details>
+
   <details class="drawer" id="feel-drawer">
     <summary class="btn ghost" title="How tight the playing is">🫀 Feel</summary>
     <div class="drawer-body">
