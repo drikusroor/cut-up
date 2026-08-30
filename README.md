@@ -252,6 +252,28 @@ saved singing has no opinion, and follows the switch.
 The voice is a part of its own in the transport, so you can hear it without the
 lead synth doubling it, or vice versa.
 
+#### Reading along
+
+A vocoder is not a diction coach. Even when you wrote the cut-up yourself, a
+synthesised voice singing it is hard to follow — so the transport carries a
+lichtkrant: the line being sung, with the word in the singer's mouth lit up, and
+the line after it waiting underneath.
+
+It is on by default, and **💡 Sing along** in the transport turns it off. It
+appears only when there is something being sung, so an instrumental never gives
+up the room for it.
+
+The words are read off the song that is playing rather than kept beside it, so
+it cannot disagree with what you are hearing: it knows about muted parts, about
+a chorus that comes round three times, and about a section that sings a
+different verse from the one before it. A line lasts until the next one starts,
+the way a subtitle does, and clicking either line plays from there — which makes
+the lyric a way about the song as well as something to read.
+
+When nothing is playing it shows the first line of whatever is loaded, so it
+doubles as a lyric sheet for the tab you are on: the arrangement on the Song
+tab, the loop on the other two.
+
 ## Song
 
 A loop is not a song. The **Song** tab keeps a drawer of *sections* and the
@@ -806,7 +828,7 @@ is not one worth handing to anybody.
 ## Development
 
 ```sh
-npm test                        # 240 unit tests, no dependencies
+npm test                        # 246 unit tests, no dependencies
 npm start                       # serve the app
 npm run taste                   # serve it, recording judgements to data/taste.jsonl
 npm run train                   # fit models/taste.json from data/taste.jsonl
@@ -833,6 +855,7 @@ src/
     instruments.js  synth recipes for lead, harmony, bass and the drum kits
     phonemes.js     spelling to sounds, and what each sound's formants are
     vocal.js        setting a lyric to a tune, and timing the sounds in a note
+    lyric-timeline.js  the words read back off a playing song, as subtitles
     sections.js     saved sections and the running order built from them
     regenerate.js   rolling a section again — all of it, or one part of it
     compose.js      writes a whole song: shape, contrast, variation, bookends
