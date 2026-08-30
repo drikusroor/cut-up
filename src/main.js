@@ -22,6 +22,7 @@ import { defaultHumanize, normalizeHumanize } from './music/humanize.js';
 import { defaultTuning, normalizeTuning } from './music/tuning.js';
 import { defaultMix, normalizeMix } from './music/mixer.js';
 import { initMixer } from './ui/mixer-panel.js';
+import { initCompact } from './ui/compact.js';
 import { randomSeed } from './rng.js';
 
 const STORAGE_KEY = 'cut-up:v1';
@@ -674,5 +675,9 @@ function frame() {
 requestAnimationFrame(frame);
 
 ctx.refreshLyrics();
+
+// Last, so it folds a shell that is already wired up: what a small screen does
+// with all of it.
+initCompact();
 
 window.addEventListener('beforeunload', () => audio.stop());

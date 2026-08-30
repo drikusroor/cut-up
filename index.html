@@ -20,7 +20,7 @@
   </div>
   <nav class="tabs" role="tablist" aria-label="Sections">
     <button class="tab is-active" role="tab" aria-selected="true" data-tab="words">Words</button>
-    <button class="tab" role="tab" aria-selected="false" data-tab="chords">Chords &amp; melody</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="chords"><span class="tab-long">Chords &amp; melody</span><span class="tab-short">Chords</span></button>
     <button class="tab" role="tab" aria-selected="false" data-tab="rhythm">Rhythm</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="song">Song</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="library">Library</button>
@@ -33,6 +33,34 @@
 <!-- ======================= WORDS ======================= -->
 <section class="panel is-active" id="panel-words" role="tabpanel" aria-label="Words">
   <div class="layout">
+
+    <div class="output">
+      <div class="output-head">
+        <button type="button" class="btn primary" id="cut">✂ Cut it up</button>
+        <button type="button" class="btn" id="reroll">Reroll</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn ghost" id="copy-lines">Copy</button>
+        <button type="button" class="btn ghost" id="download-lines">Download .txt</button>
+      </div>
+
+      <ol class="lines" id="lines-out" aria-live="polite"></ol>
+
+      <div class="titles" id="titles-out" hidden>
+        <h3>Title ideas</h3>
+        <ul></ul>
+      </div>
+
+      <div class="keepers">
+        <div class="output-head">
+          <h3>Keepers</h3>
+          <small class="hint">Click ★ on any line to keep it. Saved in this browser.</small>
+          <div class="spacer"></div>
+          <button type="button" class="btn ghost" id="copy-keepers">Copy</button>
+          <button type="button" class="btn ghost" id="clear-keepers">Clear</button>
+        </div>
+        <ul class="keeper-list" id="keepers-out"></ul>
+      </div>
+    </div>
 
     <div class="controls">
       <fieldset>
@@ -119,40 +147,44 @@
         <small class="hint">Same seed and settings always give the same cut-up.</small>
       </fieldset>
     </div>
-
-    <div class="output">
-      <div class="output-head">
-        <button type="button" class="btn primary" id="cut">✂ Cut it up</button>
-        <button type="button" class="btn" id="reroll">Reroll</button>
-        <div class="spacer"></div>
-        <button type="button" class="btn ghost" id="copy-lines">Copy</button>
-        <button type="button" class="btn ghost" id="download-lines">Download .txt</button>
-      </div>
-
-      <ol class="lines" id="lines-out" aria-live="polite"></ol>
-
-      <div class="titles" id="titles-out" hidden>
-        <h3>Title ideas</h3>
-        <ul></ul>
-      </div>
-
-      <div class="keepers">
-        <div class="output-head">
-          <h3>Keepers</h3>
-          <small class="hint">Click ★ on any line to keep it. Saved in this browser.</small>
-          <div class="spacer"></div>
-          <button type="button" class="btn ghost" id="copy-keepers">Copy</button>
-          <button type="button" class="btn ghost" id="clear-keepers">Clear</button>
-        </div>
-        <ul class="keeper-list" id="keepers-out"></ul>
-      </div>
-    </div>
   </div>
 </section>
 
 <!-- ======================= CHORDS ======================= -->
 <section class="panel" id="panel-chords" role="tabpanel" aria-label="Chords and melody" hidden>
   <div class="layout">
+
+    <div class="output">
+      <div class="output-head">
+        <button type="button" class="btn primary" id="gen-chords">✂ New progression</button>
+        <button type="button" class="btn" id="gen-melody">New melody</button>
+        <button type="button" class="btn" id="gen-bass">New bass</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn" id="save-section-quick" title="Put this idea in the section drawer">＋ Save as section</button>
+        <button type="button" class="btn ghost" id="copy-chords">Copy chords</button>
+      </div>
+
+      <div class="chord-strip" id="chords-out" aria-live="polite"></div>
+
+      <div class="output-head">
+        <h3 class="section-label">Melody</h3>
+        <div class="spacer"></div>
+        <small id="melody-edit-status" class="hint"></small>
+        <button type="button" class="btn ghost" id="undo-melody-edit" title="Undo the last hand edit (Ctrl+Z)" disabled>↶ Undo</button>
+        <button type="button" class="btn ghost" id="reset-melody-edits" title="Throw away every hand edit and go back to the generated line" disabled>Reset to generated</button>
+      </div>
+      <canvas id="piano-roll" class="piano-roll" height="260"></canvas>
+      <small class="hint">
+        <strong>Drag a note</strong> up and down to change its pitch, left and right to move it in time;
+        drag its right-hand edge to make it longer or shorter. <strong>Double-click</strong> empty space to
+        add a note, <strong>alt-click</strong> or right-click one to remove it.
+        Hand edits are kept as deviations from the generated line: they show up
+        <span class="swatch edited"></span> green over the dashed ghost of where the note started, and
+        “Reset to generated” gives you the original back. Grey lines are bars; the highlighted row is the key's root.
+        The <span class="swatch bass"></span> blue notes along the bottom are the bass — it is written
+        against the drums and the melody rather than by hand, so roll it rather than dragging it.
+      </small>
+    </div>
 
     <div class="controls">
       <fieldset>
@@ -346,44 +378,22 @@
         <small class="hint">The same seed and settings always give the same result, so write down the ones you like. Transforms and hand edits sit on top of what the seed produced.</small>
       </fieldset>
     </div>
-
-    <div class="output">
-      <div class="output-head">
-        <button type="button" class="btn primary" id="gen-chords">✂ New progression</button>
-        <button type="button" class="btn" id="gen-melody">New melody</button>
-        <button type="button" class="btn" id="gen-bass">New bass</button>
-        <div class="spacer"></div>
-        <button type="button" class="btn" id="save-section-quick" title="Put this idea in the section drawer">＋ Save as section</button>
-        <button type="button" class="btn ghost" id="copy-chords">Copy chords</button>
-      </div>
-
-      <div class="chord-strip" id="chords-out" aria-live="polite"></div>
-
-      <div class="output-head">
-        <h3 class="section-label">Melody</h3>
-        <div class="spacer"></div>
-        <small id="melody-edit-status" class="hint"></small>
-        <button type="button" class="btn ghost" id="undo-melody-edit" title="Undo the last hand edit (Ctrl+Z)" disabled>↶ Undo</button>
-        <button type="button" class="btn ghost" id="reset-melody-edits" title="Throw away every hand edit and go back to the generated line" disabled>Reset to generated</button>
-      </div>
-      <canvas id="piano-roll" class="piano-roll" height="260"></canvas>
-      <small class="hint">
-        <strong>Drag a note</strong> up and down to change its pitch, left and right to move it in time;
-        drag its right-hand edge to make it longer or shorter. <strong>Double-click</strong> empty space to
-        add a note, <strong>alt-click</strong> or right-click one to remove it.
-        Hand edits are kept as deviations from the generated line: they show up
-        <span class="swatch edited"></span> green over the dashed ghost of where the note started, and
-        “Reset to generated” gives you the original back. Grey lines are bars; the highlighted row is the key's root.
-        The <span class="swatch bass"></span> blue notes along the bottom are the bass — it is written
-        against the drums and the melody rather than by hand, so roll it rather than dragging it.
-      </small>
-    </div>
   </div>
 </section>
 
 <!-- ======================= RHYTHM ======================= -->
 <section class="panel" id="panel-rhythm" role="tabpanel" aria-label="Rhythm" hidden>
   <div class="layout">
+
+    <div class="output">
+      <div class="output-head">
+        <button type="button" class="btn primary" id="gen-rhythm">✂ New rhythm</button>
+        <button type="button" class="btn" id="cutup-rhythm">Cut up this pattern</button>
+        <div class="spacer"></div>
+        <small class="hint">Click any step to edit it.</small>
+      </div>
+      <div class="grid-wrap"><div class="step-grid" id="rhythm-out"></div></div>
+    </div>
 
     <div class="controls">
       <fieldset>
@@ -429,16 +439,6 @@
         </div>
         <small class="hint">The same seed and settings always give the same pattern. Cut-ups and hand edits sit on top of it.</small>
       </fieldset>
-    </div>
-
-    <div class="output">
-      <div class="output-head">
-        <button type="button" class="btn primary" id="gen-rhythm">✂ New rhythm</button>
-        <button type="button" class="btn" id="cutup-rhythm">Cut up this pattern</button>
-        <div class="spacer"></div>
-        <small class="hint">Click any step to edit it.</small>
-      </div>
-      <div class="grid-wrap"><div class="step-grid" id="rhythm-out"></div></div>
     </div>
   </div>
 </section>
@@ -554,6 +554,14 @@
 <section class="panel" id="panel-library" role="tabpanel" aria-label="Library" hidden>
   <div class="layout">
 
+    <div class="output">
+      <h3 class="section-label">Saved songs <span class="count" id="library-song-count"></span></h3>
+      <div class="library-shelf" id="library-songs" aria-live="polite"></div>
+
+      <h3 class="section-label">Saved sections <span class="count" id="library-section-count"></span></h3>
+      <div class="library-shelf" id="library-sections"></div>
+    </div>
+
     <div class="controls">
       <fieldset>
         <legend>This song</legend>
@@ -597,14 +605,67 @@
         <small class="hint" id="library-status"></small>
       </fieldset>
     </div>
+  </div>
+</section>
+
+<section class="panel" id="panel-train" role="tabpanel" aria-label="Train" hidden>
+  <div class="layout">
 
     <div class="output">
-      <h3 class="section-label">Saved songs <span class="count" id="library-song-count"></span></h3>
-      <div class="library-shelf" id="library-songs" aria-live="polite"></div>
-
-      <h3 class="section-label">Saved sections <span class="count" id="library-section-count"></span></h3>
-      <div class="library-shelf" id="library-sections"></div>
+      <div class="train-head">
+        <h2>On the table</h2>
+        <small class="hint" id="train-cards"></small>
+      </div>
+      <div id="train-table"></div>
     </div>
+
+    <div class="controls">
+      <fieldset>
+        <legend>Teach it what you like</legend>
+        <p class="hint">
+          It deals two or three sections out of the composer's own deck. Listen, say what you
+          think, and it deals again. Nothing here is a quiz with right answers — it is only ever
+          learning <em>your</em> opinion, and the only way it can be wrong is by disagreeing
+          with you.
+        </p>
+        <p class="hint">
+          <kbd>1</kbd>–<kbd>5</kbd> answers the highlighted question and moves on,
+          <kbd>Space</kbd> plays whatever that question is about, <kbd>Enter</kbd> saves the
+          hand and deals the next. Leave anything you have no view on unanswered — a shrug is
+          not a score, and it is better for the model to hear nothing than to hear a guess.
+        </p>
+        <div class="row wrap">
+          <button type="button" class="btn primary" id="train-deal">Save and deal again ⏎</button>
+          <button type="button" class="btn ghost" id="train-skip">Skip this hand</button>
+          <button type="button" class="btn ghost" id="train-keep" title="Put these sections on the Song tab">＋ Keep these</button>
+        </div>
+        <small class="hint" id="train-status"></small>
+      </fieldset>
+
+      <fieldset>
+        <legend>The model</legend>
+        <p class="hint" id="train-verdict"></p>
+        <p class="hint" id="train-detail"></p>
+        <div class="row wrap">
+          <button type="button" class="btn" id="train-fit">Train the model</button>
+          <button type="button" class="btn ghost" id="train-export" title="Download your judgements as taste.jsonl">⤓ Export</button>
+          <button type="button" class="btn ghost" id="train-import">⤒ Import</button>
+          <input type="file" id="train-import-file" accept=".jsonl,.json,.txt" hidden>
+        </div>
+        <label class="field slider">
+          <span>How much say it gets when composing <output id="out-train-strength"></output></span>
+          <input type="range" id="train-strength" min="0" max="1" step="0.05" value="1">
+        </label>
+        <small class="hint">
+          Scaled by how well the model did on rounds it was never trained on, so one that has
+          not beaten a coin has no say at whatever this is set to. Run
+          <code>npm run taste</code> instead of <code>npm start</code> and every answer is
+          written straight to <code>data/taste.jsonl</code>; training then rewrites
+          <code>models/taste.json</code>, and both are yours to commit.
+        </small>
+      </fieldset>
+    </div>
+
   </div>
 </section>
 
@@ -626,6 +687,15 @@
   <button type="button" class="btn primary" id="play">▶ Play</button>
   <button type="button" class="btn" id="stop">■ Stop</button>
   <label class="field inline"><span>BPM</span><input type="number" id="tempo" min="40" max="220" value="96"></label>
+
+  <!-- On a phone everything below the play button folds in behind this, so the
+       bar is one row rather than five. On a wide screen the wrapper is
+       `display: contents` and the button is gone: the bar is what it always
+       was. -->
+  <button type="button" class="btn ghost transport-more" id="transport-more"
+    aria-expanded="false" aria-controls="transport-rest">⋯ More</button>
+
+  <div class="transport-rest" id="transport-rest">
   <div class="field inline meter">
     <span>Time</span>
     <input type="number" id="meter-beats" min="1" max="16" value="4" aria-label="Beats per bar">
@@ -774,68 +844,8 @@
   <small class="hint" id="play-scope"></small>
   <button type="button" class="btn ghost" id="export-midi">⤓ Export MIDI</button>
   <button type="button" class="btn ghost" id="export-audio">⤓ Export audio</button>
-</div>
-
-<section class="panel" id="panel-train" role="tabpanel" aria-label="Train" hidden>
-  <div class="layout">
-
-    <div class="controls">
-      <fieldset>
-        <legend>Teach it what you like</legend>
-        <p class="hint">
-          It deals two or three sections out of the composer's own deck. Listen, say what you
-          think, and it deals again. Nothing here is a quiz with right answers — it is only ever
-          learning <em>your</em> opinion, and the only way it can be wrong is by disagreeing
-          with you.
-        </p>
-        <p class="hint">
-          <kbd>1</kbd>–<kbd>5</kbd> answers the highlighted question and moves on,
-          <kbd>Space</kbd> plays whatever that question is about, <kbd>Enter</kbd> saves the
-          hand and deals the next. Leave anything you have no view on unanswered — a shrug is
-          not a score, and it is better for the model to hear nothing than to hear a guess.
-        </p>
-        <div class="row wrap">
-          <button type="button" class="btn primary" id="train-deal">Save and deal again ⏎</button>
-          <button type="button" class="btn ghost" id="train-skip">Skip this hand</button>
-          <button type="button" class="btn ghost" id="train-keep" title="Put these sections on the Song tab">＋ Keep these</button>
-        </div>
-        <small class="hint" id="train-status"></small>
-      </fieldset>
-
-      <fieldset>
-        <legend>The model</legend>
-        <p class="hint" id="train-verdict"></p>
-        <p class="hint" id="train-detail"></p>
-        <div class="row wrap">
-          <button type="button" class="btn" id="train-fit">Train the model</button>
-          <button type="button" class="btn ghost" id="train-export" title="Download your judgements as taste.jsonl">⤓ Export</button>
-          <button type="button" class="btn ghost" id="train-import">⤒ Import</button>
-          <input type="file" id="train-import-file" accept=".jsonl,.json,.txt" hidden>
-        </div>
-        <label class="field slider">
-          <span>How much say it gets when composing <output id="out-train-strength"></output></span>
-          <input type="range" id="train-strength" min="0" max="1" step="0.05" value="1">
-        </label>
-        <small class="hint">
-          Scaled by how well the model did on rounds it was never trained on, so one that has
-          not beaten a coin has no say at whatever this is set to. Run
-          <code>npm run taste</code> instead of <code>npm start</code> and every answer is
-          written straight to <code>data/taste.jsonl</code>; training then rewrites
-          <code>models/taste.json</code>, and both are yours to commit.
-        </small>
-      </fieldset>
-    </div>
-
-    <div class="output">
-      <div class="train-head">
-        <h2>On the table</h2>
-        <small class="hint" id="train-cards"></small>
-      </div>
-      <div id="train-table"></div>
-    </div>
-
   </div>
-</section>
+</div>
 
 <dialog class="sheet" id="regenerate-dialog" aria-labelledby="regenerate-title">
   <h2 id="regenerate-title">Roll it again</h2>

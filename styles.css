@@ -15,6 +15,13 @@
   --ok: #7fbf6a;
   --bass: #5b8dd6;
   --radius: 6px;
+  /* One gutter for the page edge, so a strip that wants to run edge to edge on
+     a phone can cancel it exactly. */
+  --gutter: clamp(1rem, 4vw, 2.5rem);
+  /* How tall the fixed transport currently is. Measured by the app rather than
+     guessed at, because it wraps to a different number of rows on every width
+     and the page has to keep clear of exactly that much. */
+  --transport-h: 0px;
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
@@ -27,7 +34,9 @@
 
 body {
   margin: 0;
-  padding-bottom: 6rem;
+  /* Clear of the transport, whatever height it happens to be — and of nothing
+     at all on the Words tab, where there is no transport. */
+  padding-bottom: calc(var(--transport-h) + 1.5rem);
   background:
     radial-gradient(circle at 20% -10%, #26251c 0%, transparent 55%),
     var(--bg);
@@ -49,7 +58,7 @@ a { color: var(--accent-soft); }
   gap: 1rem;
   align-items: flex-end;
   justify-content: space-between;
-  padding: 1.4rem clamp(1rem, 4vw, 2.5rem) 0;
+  padding: 1.4rem var(--gutter) 0;
 }
 
 .brand { display: flex; gap: 0.85rem; align-items: center; }
@@ -57,7 +66,19 @@ a { color: var(--accent-soft); }
 .scissors { font-size: 1.9rem; color: var(--accent); transform: rotate(-18deg); }
 .tagline { margin: 0.15rem 0 0; color: var(--ink-dim); font-size: 0.86rem; max-width: 46ch; }
 
-.tabs { display: flex; gap: 0.25rem; }
+/* Six tabs do not fit across a phone, and a nav that simply overflows takes the
+   whole document sideways with it. So it scrolls on its own, edge to edge, and
+   snaps — with the last two tabs reachable by a swipe rather than not at all. */
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  max-width: 100%;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.tabs::-webkit-scrollbar { display: none; }
 
 .tab {
   appearance: none;
@@ -70,26 +91,40 @@ a { color: var(--accent-soft); }
   padding: 0.5rem 1rem;
   border-radius: var(--radius) var(--radius) 0 0;
   cursor: pointer;
+  flex: none;
+  white-space: nowrap;
+  scroll-snap-align: start;
 }
 .tab:hover { color: var(--ink); background: #201f18; }
 .tab.is-active { background: var(--bg-panel); color: var(--ink); border-color: var(--line); }
 
+/* Each tab carries a short name for the strip and its full name for the
+   sidebar-width screens where there is room to write it out. */
+.tab .tab-short { display: none; }
+
 /* ---------- layout ---------- */
 
-main { padding: 0 clamp(1rem, 4vw, 2.5rem); }
+main { padding: 0 var(--gutter); }
 
 .panel { border-top: 1px solid var(--line); padding-top: 1.4rem; }
 .panel[hidden] { display: none; }
 
+/* The output comes first in the markup, because on a phone — where the two
+   columns become one — what you are making has to be above the knobs that make
+   it, not two thousand pixels below them. On a wide screen the knobs go back to
+   the left by being placed there explicitly rather than by document order. */
 .layout {
   display: grid;
   grid-template-columns: minmax(260px, 340px) 1fr;
   gap: 1.5rem;
   align-items: start;
 }
+.layout > .controls { grid-column: 1; grid-row: 1; }
+.layout > .output { grid-column: 2; grid-row: 1; }
 
 @media (max-width: 860px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout { grid-template-columns: 1fr; gap: 1.1rem; }
+  .layout > .controls, .layout > .output { grid-column: 1; grid-row: auto; }
 }
 
 /* ---------- controls ---------- */
@@ -476,7 +511,28 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
 
 /* ---------- rhythm grid ---------- */
 
-.grid-wrap { overflow-x: auto; padding-bottom: 0.4rem; }
+/* Sixteen steps and a column of names do not fit across a phone, and a step you
+   cannot hit with a finger is worse than one you have to scroll to. So the grid
+   scrolls, and says so.
+
+   The shadows at its edges are the usual four-layer trick: two covers painted
+   in the panel's own colour that scroll with the content, and two shadows
+   pinned to the box behind them. A cover only disappears at the end of its
+   travel, which is exactly when there is nothing more that way. It needs a
+   colour to hide against, which is why the grid is sunk into a panel of its
+   own — the same one the piano roll is drawn on. */
+.grid-wrap {
+  overflow-x: auto;
+  padding: 0.55rem 0.5rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(to right, var(--bg-sunk) 45%, rgba(16, 15, 11, 0)) left center / 2.5rem 100% no-repeat local,
+    linear-gradient(to left, var(--bg-sunk) 45%, rgba(16, 15, 11, 0)) right center / 2.5rem 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.55), transparent) left center / 0.7rem 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.55), transparent) right center / 0.7rem 100% no-repeat scroll,
+    var(--bg-sunk);
+}
 /* Steps stretch to fill the width, then scroll once they hit their floor. */
 .step-grid { display: flex; flex-direction: column; gap: 0.3rem; min-width: min-content; }
 
@@ -526,7 +582,7 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: center;
-  padding: 0.7rem clamp(1rem, 4vw, 2.5rem);
+  padding: 0.7rem var(--gutter);
   background: rgba(20, 20, 15, 0.94);
   backdrop-filter: blur(8px);
   border-top: 1px solid var(--line);
@@ -536,6 +592,18 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
 .transport .field.inline input[type="number"] { width: 4.5rem; }
 .transport .field.inline input[type="range"] { width: 6rem; }
 .parts { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+
+/* Everything past the play button. On a wide screen this wrapper is not there
+   at all as far as layout is concerned, so the bar lays out exactly as it did
+   before it existed; on a phone it becomes a row of its own that the “More”
+   button opens. It is deliberately not positioned, so the drawers inside it go
+   on measuring themselves against the transport. */
+.transport-rest { display: contents; }
+.transport-more { display: none; }
+
+/* The header that folds a settings box away. It is put there by the app on
+   every width; only a narrow one draws it. */
+.fieldset-toggle { display: none; }
 
 /* The time signature, written the way it is written on paper. */
 .meter input[type="number"] { width: 3.2rem; text-align: center; }
@@ -736,7 +804,7 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
 #panel-library.is-dropping { outline: 2px dashed var(--accent-soft); outline-offset: -0.5rem; }
 
 .colophon {
-  padding: 2rem clamp(1rem, 4vw, 2.5rem) 1rem;
+  padding: 2rem var(--gutter) 1rem;
   color: var(--ink-faint);
   font-size: 0.78rem;
   max-width: 70ch;
@@ -744,7 +812,7 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
 
 .toast {
   position: fixed;
-  bottom: 5.5rem;
+  bottom: calc(var(--transport-h) + 1rem);
   left: 50%;
   transform: translateX(-50%);
   background: var(--paper);
@@ -761,15 +829,167 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
-/* The ribbon is another row of the fixed transport, so the page has to keep
-   clear of it as well. */
-body.with-ribbon { padding-bottom: 10rem; }
+/* ---------- small screens ----------
 
-/* The transport wraps onto three rows on a phone, so keep clear of it. */
-@media (max-width: 640px) {
-  body { padding-bottom: 13rem; }
-  body.with-ribbon { padding-bottom: 17rem; }
-  .transport { gap: 0.5rem 0.75rem; }
+   A phone is not a narrow desktop. Three things change below 860px, where the
+   two columns become one:
+
+   - the header shrinks to a title and a scrolling strip of tabs;
+   - every box of settings folds shut, so the page opens on what you are making
+     rather than on ten screens of sliders above it;
+   - the transport folds down to play, stop, tempo and a “More” button, instead
+     of five wrapped rows eating a third of the screen.
+
+   Nothing is taken away. Everything is one tap further off. */
+
+@media (max-width: 860px) {
+  .topbar {
+    padding-top: 0.9rem;
+    gap: 0.7rem;
+    align-items: stretch;
+  }
+  .brand { gap: 0.55rem; }
+  .brand h1 { font-size: 1.25rem; }
+  .scissors { font-size: 1.5rem; }
+  /* The tagline is a nice line to read once; it is not worth a fifth of a
+     phone screen on every visit. */
+  .tagline { display: none; }
+
+  /* The strip runs to both edges of the screen, so it is obvious that it
+     scrolls and so the last tab is not clipped against the gutter. */
+  .tabs {
+    flex: 1 0 100%;
+    margin: 0 calc(var(--gutter) * -1);
+    padding: 0 var(--gutter);
+    scroll-padding-left: var(--gutter);
+  }
+  .tab .tab-long { display: none; }
+  .tab .tab-short { display: inline; }
+
+  .panel { padding-top: 1rem; }
+  /* A spacer pushes the second half of a toolbar to the right of a wide screen.
+     On a wrapped one it only punches a hole in the middle of the buttons. */
+  .output-head > .spacer, .train-head > .spacer { display: none; }
+
+  /* --- settings that fold --- */
+
+  .controls { gap: 0.5rem; }
+  .controls > fieldset.collapsible { padding: 0 1rem 0.9rem; }
+  .controls > fieldset.collapsible.is-collapsed { padding-bottom: 0; }
+  /* The legend's words are in the button now; two of them would be read out
+     twice. */
+  .controls > fieldset.collapsible > legend { display: none; }
+
+  .fieldset-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    width: calc(100% + 2rem);
+    margin: 0 -1rem;
+    padding: 0.7rem 1rem;
+    min-height: 2.75rem;
+    border: 0;
+    background: none;
+    color: var(--ink-dim);
+    font: inherit;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    text-align: left;
+    cursor: pointer;
+  }
+  .fieldset-toggle::after {
+    content: "▾";
+    font-size: 0.9rem;
+    letter-spacing: 0;
+    color: var(--ink-faint);
+    transition: transform 0.15s ease;
+  }
+  .fieldset-toggle[aria-expanded="false"]::after { transform: rotate(-90deg); }
+  .fieldset-toggle[aria-expanded="true"] {
+    color: var(--ink);
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 0.85rem;
+  }
+  .controls > fieldset.is-collapsed > *:not(legend):not(.fieldset-toggle) { display: none; }
+
+  /* The composer is the whole point of the Song tab, so it keeps its outline
+     even shut. */
+  fieldset.composer .fieldset-toggle { color: var(--accent-soft); }
+
+  /* --- the transport, folded --- */
+
+  /* Tight enough that play, stop, the tempo and the button that opens the rest
+     land on one row from about 375px up. */
+  .transport { gap: 0.45rem 0.4rem; padding: 0.55rem var(--gutter); }
+  .transport > .btn, .transport-more { padding-left: 0.7rem; padding-right: 0.7rem; }
+  .transport .field.inline input[type="number"] { width: 3.4rem; }
+  .transport-more { display: inline-flex; align-items: center; }
+  .transport-more[aria-expanded="true"] { background: #302f24; color: var(--ink); }
+
+  .transport-rest {
+    display: flex;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem 0.75rem;
+    /* It can grow taller than the screen once every drawer summary, both
+       exports and five part switches are on it, so let it scroll rather than
+       push the play button off the bottom — and leave room above for a drawer
+       opened from inside it. */
+    max-height: 35vh;
+    overflow-y: auto;
+    padding-top: 0.15rem;
+    border-top: 1px solid var(--line);
+  }
+  /* The spacer is there to push the exports right on a wide bar; on a wrapped
+     one it only makes a hole. What it was pushing away takes a line of its own
+     instead, so the two exports sit side by side. */
+  .transport-rest > .spacer { display: none; }
+  .transport-rest > #play-scope { flex: 1 0 100%; }
+  .parts { gap: 0.5rem 0.9rem; }
+
+  /* The drawers open against the transport, which is now up to two rows tall,
+     so give them the whole width and let them use the height. */
+  .drawer-body, .drawer-body.wide {
+    width: calc(100vw - 1rem);
+    right: calc(var(--gutter) * -1 + 0.5rem);
+    max-height: 55vh;
+  }
+
+  /* --- panels --- */
+
+  /* Five feet of instrument name is not worth 40% of a phone. */
+  .grid-row .label { width: 3.9rem; font-size: 0.72rem; }
+  .train-hand { gap: 0.5rem; }
+  .colophon { padding-top: 1.5rem; }
+}
+
+/* Touch, rather than width: a finger needs a bigger target than a mouse does,
+   whatever size window it is pointing at. */
+@media (pointer: coarse) {
+  .btn { min-height: 2.6rem; padding: 0.5rem 0.85rem; }
+  .section-actions .btn, .split-btn .btn { min-height: 2.3rem; padding: 0.4rem 0.6rem; font-size: 0.8rem; }
+  input[type="text"], input[type="number"], select, textarea { min-height: 2.6rem; }
+  textarea { min-height: 5rem; }
+  input[type="range"] { height: 2rem; }
+  .check { min-height: 2.2rem; gap: 0.5rem; }
+  .check input { width: 1.15rem; height: 1.15rem; }
+
+  /* The little glyph buttons: the star and padlock on a line, the repeat
+     counters on an arrangement chip, mute and solo on a channel. */
+  .line-btn { padding: 0.5rem; font-size: 1rem; opacity: 0.55; }
+  .chip-btn { padding: 0.4rem 0.5rem; font-size: 0.95rem; }
+  .chip-remove { padding: 0.45rem; font-size: 0.8rem; }
+  .chord-card .lock { padding: 0.45rem; font-size: 0.9rem; }
+  .mix-toggle { padding: 0.4rem 0.5rem; font-size: 0.72rem; }
+  .rate-btn { padding: 0.45rem 0.7rem; font-size: 0.8rem; }
+
+  /* A step you can actually hit. The grid scrolls sideways rather than
+     shrinking them below a fingertip. */
+  .step { height: 2.1rem; min-width: 1.5rem; max-width: 2.4rem; }
+  .grid-row { gap: 0.25rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

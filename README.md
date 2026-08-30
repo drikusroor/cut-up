@@ -825,6 +825,35 @@ wrapped and handed back to the browser to decode. The AAC frames come from the
 browser but the container around them is ours, and a file it cannot read itself
 is not one worth handing to anybody.
 
+## On a phone
+
+The desk is two columns on anything wide enough to hold them: settings down the
+left, what you are making on the right. Below 860px there is only one column,
+and the question becomes what goes at the top of it.
+
+What you are making does. Every tab puts its output — the paper, the chord
+cards and the piano roll, the step grid — above the controls, with the button
+that makes a new one at the top of it. The settings sit underneath, each box
+folded shut behind its own heading: **Key**, **Progression**, **Melody**,
+**Bass** and so on, tapped open one at a time and remembered between visits.
+Nothing is taken away; the seven boxes of the Chords tab are seven headings you
+can see at once instead of ten screens you have to scroll through. Song and
+Library are the other way round, because their output is empty until you have
+used the controls — there the composer and the save buttons come first.
+
+The transport folds too. Play, stop and the tempo stay on the bar; the time
+signature, swing, the part switches, the mix, feel and tuning drawers and both
+exports go behind **⋯ More**, which turns a bar that wrapped onto five rows and
+took a third of the screen into one row of sixty pixels. The page keeps clear of
+whatever height it actually is, measured rather than guessed, so there is no
+band of dead space under the footer and nothing hides behind the bar.
+
+The tab strip scrolls sideways rather than dragging the whole document with it,
+and keeps the tab you are on in view. The step grid scrolls sideways too — a
+step you can hit with a finger is worth more than sixteen of them you cannot —
+and the shadow at its edge says so. Buttons, fields and steps all grow on a
+touch screen, whatever width the window is.
+
 ## Development
 
 ```sh
@@ -879,7 +908,8 @@ src/
     judgements.js   the .jsonl record format — seeds and opinions, no music
     store.js        loading and saving, with or without a server behind it
   ui/               one module per tab, one for each of the transport's drawers,
-                    one for the export and regenerate dialogs, plus DOM helpers
+                    one for the export and regenerate dialogs, compact.js for
+                    what a small screen folds away, plus DOM helpers
   main.js           state, persistence, tabs, transport
 data/
   words.*.json      the dictionaries
