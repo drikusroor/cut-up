@@ -9,6 +9,7 @@ import { initFeel } from './ui/feel-panel.js';
 import { initTrain } from './ui/train-panel.js';
 import { initExportAudio } from './ui/export-panel.js';
 import { initLibrary } from './ui/library-panel.js';
+import { initLyricRibbon } from './ui/lyric-ribbon.js';
 import { AudioEngine } from './music/audio.js';
 import { songToMidi } from './music/midi.js';
 import { buildSongPlan, clockTime, planSeconds } from './music/sections.js';
@@ -123,6 +124,9 @@ function defaultState() {
     currentSectionId: null,
     // What the composer was last asked for — see music/compose.js.
     compose: defaultComposeSettings(),
+    // Whether the transport shows the words as they are sung — see the
+    // lichtkrant in ui/lyric-ribbon.js.
+    subtitles: true,
     // How much say the trained model gets when composing, 0..1. Multiplied by
     // how much the model has actually earned — see ml/model.js.
     tasteStrength: 1,
@@ -218,7 +222,10 @@ const chordsPanel = initChords(ctx);
 ctx.onRhythmChange = () => chordsPanel.rebuildBass();
 // New words are new lyrics, if the voice is set to sing whatever the Words tab
 // is showing.
-ctx.onWordsChange = () => chordsPanel.refreshVocal();
+ctx.onWordsChange = () => {
+  chordsPanel.refreshVocal();
+  ctx.refreshLyrics?.();
+};
 const rhythmPanel = initRhythm(ctx);
 const songPanel = initSong(ctx, { chords: chordsPanel, rhythm: rhythmPanel });
 
@@ -244,6 +251,7 @@ ctx.applyLoadedSong = () => {
 ctx.onVocalChange = () => {
   chordsPanel.applyVocal();
   songPanel.syncSing();
+  ctx.refreshLyrics?.();
 };
 
 // A bar of a different length is a different grid: the drum pattern is re-laid
@@ -268,6 +276,8 @@ ctx.taste = () => trainPanel.model();
 // The export dialog is shared: the transport, the Song tab and every card on
 // the shelf open the same one.
 const exportPanel = initExportAudio(ctx);
+// The words as they go past, along the top of the transport.
+const lyricRibbon = initLyricRibbon(ctx);
 // The key lives in the Chords tab but the temperament readout is in the
 // transport, so the two have to be introduced.
 ctx.onKeyChange = () => {
@@ -293,6 +303,7 @@ function showTab(name) {
   if (name === 'train') trainPanel.refresh();
   if (name === 'library') ctx.library?.refresh();
   renderPlayScope();
+  ctx.refreshLyrics?.();
   save();
 }
 
@@ -446,7 +457,11 @@ function startPlayback(options) {
   playbackScope = options?.scope || (state.tab === 'song' ? 'song' : 'loop');
   ctx.syncInstruments();
   ctx.syncFeel();
-  audio.play(buildSong({ scope: playbackScope, startStep: options?.startStep }));
+  const song = buildSong({ scope: playbackScope, startStep: options?.startStep });
+  audio.play(song);
+  // The ribbon reads the words off the very object that is being played, so it
+  // cannot be showing you a line the singer is not singing.
+  lyricRibbon.setSong(song);
 }
 
 function exportMidi(options) {
@@ -531,7 +546,30 @@ ctx.onTransportChange = () => {
 /** For changes that alter the sound without altering a note. */
 ctx.refreshPlayback = () => {
   if (audio.playing) startPlayback({ scope: playbackScope });
+  else ctx.refreshLyrics();
 };
+
+/**
+ * New words, a new tune or a new running order: the ribbon is shown the song
+ * as it now stands, so the lyric sheet in the transport is the one you would
+ * hear if you pressed play. While something is playing it is already being
+ * kept up to date by startPlayback, which rebuilds on every such change.
+ */
+ctx.refreshLyrics = () => {
+  if (audio.playing) return;
+  lyricRibbon.setSong(buildSong({ scope: state.tab === 'song' ? 'song' : 'loop' }));
+};
+
+/**
+ * Play from a given step of whatever is loaded — what clicking a line of the
+ * ribbon does. A hand dealt on the Train tab is not the transport's song, so
+ * that one starts from the top instead.
+ */
+ctx.seekTo = (step) => {
+  const scope = playbackScope === 'cards' ? undefined : playbackScope;
+  startPlayback({ scope, startStep: step });
+};
+
 ctx.playSong = () => startPlayback({ scope: 'song' });
 
 /** Which block of the arrangement is currently sounding, or -1 if none is. */
@@ -568,7 +606,7 @@ ctx.playCards = (sections, { tempo, meter } = {}) => {
   ctx.syncInstruments();
   ctx.syncFeel();
   playbackScope = 'cards';
-  audio.play({
+  const song = {
     sections: plan.blocks.map((block) => block.song),
     totalSteps: plan.totalSteps,
     // The hand brings its own tempo and bar; the transport is left alone,
@@ -582,7 +620,9 @@ ctx.playCards = (sections, { tempo, meter } = {}) => {
     mix: state.mix,
     parts: state.parts,
     loop: true,
-  });
+  };
+  audio.play(song);
+  lyricRibbon.setSong(song);
 };
 
 /** The Train tab keeping a hand adds sections the Song tab has not drawn yet. */
@@ -593,6 +633,7 @@ ctx.exportSectionAudio = (section) => exportAudio({ scope: 'section', section })
 ctx.onSongChange = () => {
   renderPlayScope();
   if (audio.playing && playbackScope === 'song') startPlayback({ scope: 'song' });
+  else ctx.refreshLyrics?.();
 };
 
 $('#play').addEventListener('click', () => startPlayback());
@@ -624,8 +665,14 @@ function frame() {
     chordsPanel.highlight(inSong ? -1 : step);
     songPanel.highlight(playbackScope === 'song' && step >= 0 ? step : -1);
   }
+  // A word is lit for a fraction of a beat, so the ribbon is given the
+  // unrounded playhead and every frame — it draws nothing until the word or
+  // the line it is showing actually changes.
+  lyricRibbon.highlight(audio.playing ? audio.position : -1);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+ctx.refreshLyrics();
 
 window.addEventListener('beforeunload', () => audio.stop());

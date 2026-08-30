@@ -31,6 +31,12 @@ import {
 import { songToMidi } from '../src/music/midi.js';
 import { AudioEngine } from '../src/music/audio.js';
 import { buildSongPlan, sectionSong } from '../src/music/sections.js';
+import {
+  lineAt,
+  lyricLines,
+  lyricTimeline,
+  wordAt,
+} from '../src/music/lyric-timeline.js';
 
 // --- sounding words out -----------------------------------------------------
 
@@ -627,4 +633,96 @@ test('turning the voice on sings the song you already have, a verse per part', (
   // Lending a voice does not stretch the song.
   assert.equal(plan.totalSteps, silent.totalSteps);
   assert.deepEqual(plan.blocks.map((b) => b.steps), silent.blocks.map((b) => b.steps));
+});
+
+// --- the words going past ---------------------------------------------------
+
+test('the sung notes go back together as lines of words', () => {
+  // Two phrases with a breath between them.
+  const melody = [...run(4), ...run(4, { from: 12 })];
+  const set = setLyric(melody, ['Cold salt hums low', 'rust and kerosene'], { seed: 'a' });
+  const lines = lyricLines(set.notes);
+
+  assert.equal(lines.length, 2, 'a line per breath');
+  assert.equal(lines[0].text, 'Cold salt hums low');
+  assert.equal(lines[0].start, 0);
+  assert.equal(lines[0].end, 8, 'a line lasts until its last note lets go');
+  assert.deepEqual(lines[0].words.map((w) => w.start), [0, 2, 4, 6]);
+  assert.equal(lines[1].start, 12);
+  // Every word is one word: a syllable held over several notes does not become
+  // a word of its own, and neither does the note after it.
+  assert.ok(lines.every((line) => line.words.every((w) => !w.text.includes(' '))));
+});
+
+test('a word that runs past the end of its phrase does not swallow the next one', () => {
+  // A phrase too short for its line leaves a word cut in half: "ke-ro" here,
+  // with "-sene" carried over the breath into the phrase after it.
+  const melody = [...run(4), ...run(4, { from: 12 })];
+  const set = setLyric(melody, ['rust and kerosene', 'Cold salt hums low'], { seed: 'b' });
+  const lines = lyricLines(set.notes);
+  assert.deepEqual(lines.map((line) => line.words.map((w) => w.text)), [
+    ['rust', 'and', 'kerosene'],
+    ['kerosene'],
+  ], 'the word appears in both lines, because it is sung in both');
+
+  // And a word only ever ends where the setting says it does — so a note
+  // carrying a different word starts a different word, whatever came before it.
+  const hand = [
+    { midi: 60, step: 0, length: 2, syllable: { text: 'ke', word: 'kerosene', wordEnd: false } },
+    { midi: 62, step: 2, length: 2, syllable: { text: 'Cold', word: 'Cold', wordEnd: true } },
+    { midi: 64, step: 4, length: 2, syllable: { text: 'salt', word: 'salt', wordEnd: true } },
+  ];
+  assert.deepEqual(lyricLines(hand)[0].words.map((w) => w.text), ['kerosene', 'Cold', 'salt']);
+});
+
+test('a tune that comes round again starts a new line each time', () => {
+  const set = setLyric(run(4), ['Cold salt hums low'], { seed: 'c' });
+  // A melody eight steps long under a loop twice that: it plays twice.
+  const song = { melody: set.notes, totalSteps: 16, stepsPerBar: 16 };
+  const { lines } = lyricTimeline(song);
+  assert.equal(lines.length, 2);
+  assert.deepEqual(lines.map((l) => l.start), [0, 8]);
+  assert.equal(lines[0].text, lines[1].text);
+});
+
+test('an arrangement subtitles every repeat of every section, in order', () => {
+  const vocal = { on: true, lines: ['Ash and iron', 'Cold rain falling'] };
+  const sections = [saved('a'), saved('b')];
+  const arrangement = [{ sectionId: 'a', repeats: 2 }, { sectionId: 'b', repeats: 1 }];
+  const plan = buildSongPlan(sections, arrangement, { vocal });
+  const song = { sections: plan.blocks.map((b) => b.song), totalSteps: plan.totalSteps };
+
+  const { lines } = lyricTimeline(song);
+  assert.ok(lines.length >= 3, 'the repeat is sung again, and subtitled again');
+  // In order, inside the song, and never running past the end of it.
+  for (let i = 1; i < lines.length; i++) assert.ok(lines[i].start >= lines[i - 1].start);
+  assert.ok(lines.at(-1).end <= plan.totalSteps);
+  // A line never straddles two sections: A ends where A ends.
+  const firstBlockEnd = plan.blocks[0].length;
+  assert.ok(lines.every((line) => line.start >= firstBlockEnd || line.end <= firstBlockEnd));
+});
+
+test('an instrumental has no subtitles', () => {
+  assert.deepEqual(lyricTimeline({ melody: run(6), totalSteps: 16 }).lines, []);
+  assert.deepEqual(lyricTimeline({}).lines, []);
+  assert.deepEqual(lyricTimeline(null).lines, []);
+});
+
+test('a subtitle stays up until the next one starts', () => {
+  const lines = [
+    { start: 0, end: 4, text: 'one', words: [{ text: 'one', start: 0, end: 2 }, { text: 'two', start: 2, end: 4 }] },
+    { start: 12, end: 16, text: 'three', words: [{ text: 'three', start: 12, end: 16 }] },
+  ];
+  assert.equal(lineAt(lines, -1), -1, 'nothing before the first word is sung');
+  assert.equal(lineAt(lines, 0), 0);
+  // Still the first line during the rest after it — you are still reading it.
+  assert.equal(lineAt(lines, 8), 0);
+  assert.equal(lineAt(lines, 12), 1);
+  assert.equal(lineAt(lines, 999), 1);
+
+  assert.equal(wordAt(lines[0], 0), 0);
+  assert.equal(wordAt(lines[0], 1.9), 0, 'the word is lit for as long as it lasts');
+  assert.equal(wordAt(lines[0], 2), 1);
+  assert.equal(wordAt(lines[0], -1), -1);
+  assert.equal(wordAt(null, 4), -1);
 });

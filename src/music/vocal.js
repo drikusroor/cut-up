@@ -211,7 +211,7 @@ export function singMelody(music = {}) {
 // --- setting the words to the tune ------------------------------------------
 
 /** A gap of this many steps or more is a breath, and so a new phrase. */
-const PHRASE_GAP = 3;
+export const PHRASE_GAP = 3;
 /** A note has to be at least this long before two syllables will fit on it. */
 const SPLITTABLE = 2;
 
