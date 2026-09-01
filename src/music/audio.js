@@ -280,15 +280,24 @@ export class AudioEngine extends Synth {
   }
 
 
-  get currentStep() {
+  /**
+   * Where the playhead is, in steps, unrounded — for anything that has to move
+   * as smoothly as the sound does, like the words going past in the transport.
+   */
+  get position() {
     if (!this.playing || !this.ctx || !this.loopSeconds) return -1;
     const elapsed = this.ctx.currentTime - this.startTime;
     if (elapsed < 0) return -1;
     // Through the clock rather than by division, so the playhead still lands on
     // the right chip in a song whose coda is in half time.
-    return Math.floor(this.clock
+    return this.clock
       ? this.clock.stepAt(elapsed % this.loopSeconds)
-      : (elapsed % this.loopSeconds) / this.secondsPerStep);
+      : (elapsed % this.loopSeconds) / this.secondsPerStep;
+  }
+
+  get currentStep() {
+    const at = this.position;
+    return at < 0 ? -1 : Math.floor(at);
   }
 
   stop() {

@@ -17,6 +17,22 @@
 /** What a chord is struck at before a section has its say. */
 const CHORD_VELOCITY = 80;
 
+/**
+ * How long one pass of the pitched parts is, before they come round again.
+ *
+ * The melody and the bass are written against the progression, so all three
+ * repeat together — a two-bar tune under a four-bar progression comes back at
+ * bar five, not bar three. Playback needs this to lay the parts out; the
+ * subtitles need it to know where a line starts over.
+ */
+export function passSteps(song) {
+  const {
+    chordVoicings = [], stepsPerChord = 16, melody = [], bass = [],
+  } = song || {};
+  const end = (notes) => notes.reduce((max, note) => Math.max(max, note.step + note.length), 0);
+  return Math.max(chordVoicings.length * stepsPerChord, end(melody), end(bass));
+}
+
 /** The natural length of a song in steps: however long its longest part is. */
 export function naturalSteps(song) {
   const {
@@ -131,10 +147,9 @@ export function arrange(song) {
 
   const chordSpan = chordVoicings.length * stepsPerChord;
   const drumSpan = rhythm?.tracks?.[0]?.pattern.length ?? 0;
-  const end = (notes) => notes.reduce((max, note) => Math.max(max, note.step + note.length), 0);
   // The melody and the bass are written against the progression, so all three
   // repeat together even when the notes stop short of the last chord.
-  const melodySpan = Math.max(chordSpan, end(melody), end(bass));
+  const melodySpan = passSteps(song);
   const totalSteps = song?.totalSteps || Math.max(chordSpan, drumSpan, melodySpan, stepsPerBar);
 
   const chords = [];

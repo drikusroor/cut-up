@@ -613,6 +613,17 @@
 
 <!-- ======================= TRANSPORT ======================= -->
 <div class="transport" id="transport" hidden>
+  <!-- The lichtkrant: the words going past as they are sung. It is drawn from
+       whatever the transport is about to play, so it says nothing until there
+       is a voice singing something. -->
+  <div class="lyric-ribbon" id="lyric-ribbon" hidden>
+    <span class="lyric-mic" aria-hidden="true">🎤</span>
+    <div class="lyric-lines">
+      <button type="button" class="lyric-line lyric-now" id="lyric-now" title="Play from this line"></button>
+      <button type="button" class="lyric-line lyric-next" id="lyric-next" title="Play from this line"></button>
+    </div>
+  </div>
+
   <button type="button" class="btn primary" id="play">▶ Play</button>
   <button type="button" class="btn" id="stop">■ Stop</button>
   <label class="field inline"><span>BPM</span><input type="number" id="tempo" min="40" max="220" value="96"></label>
@@ -639,6 +650,9 @@
     <label class="check"><input type="checkbox" id="part-bass" checked> Bass</label>
     <label class="check"><input type="checkbox" id="part-drums" checked> Drums</label>
   </div>
+
+  <button type="button" class="btn ghost" id="lyric-toggle" aria-pressed="true"
+    title="Show the words as they are sung">💡 Sing along</button>
 
   <div class="drawers">
   <details class="drawer" id="mixer-drawer">
@@ -954,6 +968,7 @@
     <a href="https://github.com/hermitdave/FrequencyWords" rel="noopener">hermitdave/FrequencyWords</a>
     (OpenSubtitles 2018, CC BY-SA 4.0). Everything else is generated in your browser — nothing is uploaded.
   </p>
+  <p>This is a product of <a href="https://studioroor.com" rel="noopener">Studio Roor</a>.</p>
 </footer>
 
 <script type="module" src="src/main.js"></script>

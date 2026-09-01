@@ -572,6 +572,76 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
 .meter .over { color: var(--ink-faint); }
 .meter .hint { white-space: nowrap; }
 
+/* ---------- the lichtkrant ---------- */
+
+/* A strip of the lyric across the top of the transport: the line being sung,
+   and the one coming. It takes a whole row of the bar to itself, so the
+   controls under it stay where they were. */
+.lyric-ribbon {
+  flex: 1 0 100%;
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  min-width: 0;
+  padding: 0.35rem 0.7rem;
+  background: var(--bg-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.lyric-mic { font-size: 1rem; opacity: 0.55; }
+.lyric-lines { flex: 1; min-width: 0; }
+
+/* Each line is a button: clicking one plays from there, which turns the words
+   into a way about the song as well as something to read. */
+.lyric-line {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.05rem 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  cursor: pointer;
+}
+.lyric-line::-webkit-scrollbar { display: none; }
+.lyric-line:disabled { cursor: default; }
+.lyric-line:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.lyric-now {
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+  color: var(--ink-faint);
+}
+.lyric-next {
+  font-size: 0.85rem;
+  color: var(--ink-faint);
+  opacity: 0.75;
+}
+/* Nothing has started yet — the top line is the one that is coming, not one
+   being sung, so it is written the way the one underneath it is. */
+.lyric-ribbon.is-pending .lyric-now { color: var(--ink-dim); font-weight: 500; }
+
+.lyric-word {
+  display: inline-block;
+  transition: color 120ms linear, text-shadow 120ms linear;
+}
+/* Sung already: lit but cooling. Being sung: the bulb that is on. */
+.lyric-word.is-sung { color: var(--ink); }
+.lyric-word.is-singing {
+  color: var(--accent-soft);
+  text-shadow: 0 0 14px rgba(226, 84, 60, 0.55);
+}
+
+/* The toggle in the transport, lit while the ribbon is on. */
+#lyric-toggle.is-on { background: #302f24; color: var(--ink); }
+
 /* ---------- transport drawers ---------- */
 
 /* Feel and tuning belong to the whole song rather than to any one tab, so they
@@ -720,9 +790,14 @@ fieldset.composer details > *:not(summary) { margin-bottom: 0.5rem; }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
+/* The ribbon is another row of the fixed transport, so the page has to keep
+   clear of it as well. */
+body.with-ribbon { padding-bottom: 10rem; }
+
 /* The transport wraps onto three rows on a phone, so keep clear of it. */
 @media (max-width: 640px) {
   body { padding-bottom: 13rem; }
+  body.with-ribbon { padding-bottom: 17rem; }
   .transport { gap: 0.5rem 0.75rem; }
 }
 
