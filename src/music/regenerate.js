@@ -23,6 +23,7 @@ import {
   BASS_INSTRUMENTS, DRUM_KITS, HARMONY_INSTRUMENTS, LEAD_INSTRUMENTS, resolveInstruments,
 } from './instruments.js';
 import { clone } from './sections.js';
+import { applyVariations, pruneStaleTraits } from './variations.js';
 
 /**
  * What can be rolled again, and what happens to everything else when it is.
@@ -133,24 +134,39 @@ function transposeBy(music, semitones) {
  * @param {number} [options.rootPc] move it to another key
  * @param {string} [options.scaleId] and another mode, which forces new chords
  * @param {object} [options.meter] count it in another bar
+ * @param {object} [options.variations] the composer's own moves, as controls —
+ *   see music/variations.js. Switches and dials are set outright; moves are
+ *   applied and then whatever they disturbed is rolled again, whether or not
+ *   you asked for it, because a busier section with the old tune on it is not
+ *   busier.
  * @param {string} [options.seed] roll it reproducibly
  * @returns {object} a new section object — the caller decides where it goes
  */
 export function regenerateSection(section, options = {}) {
   const {
-    aspects = allAspects(), rootPc, scaleId, meter, seed = '',
+    aspects = allAspects(), rootPc, scaleId, meter, seed = '', variations = null,
   } = options;
   const wanted = new Set(aspects);
   const seeds = seedsFor(seed);
 
   const source = clone(section);
+
+  // The variations go on first, because everything below is generated *from*
+  // the settings they change: asking for a section held back and then writing
+  // its drums against the old density would be writing the wrong drums.
+  const edit = variations
+    ? applyVariations(source, variations, { rng: makeRng(`vary:${seeds.voices}`) })
+    : { rolls: new Set(), enables: new Set(), regrid: false };
+  for (const aspect of edit.rolls) wanted.add(aspect);
+
   let music = { ...source.music };
   // A section that has no harmony was written that way — the drums-only count-in
   // the composer puts at the top of a song — and rolling it again must not
   // quietly hand it a progression. The same goes for one with no tune. Rolling
   // a section changes what it is made of, never what it is.
   const hasChords = (source.music.chords || []).length > 0;
-  const hasMelody = (source.music.melodyBase || []).length > 0
+  const hasMelody = edit.enables.has('melody')
+    || (source.music.melodyBase || []).length > 0
     || (source.music.melody || []).length > 0;
   const rhythm = { ...source.rhythm };
   const bar = meter || source.meter || null;
@@ -170,7 +186,9 @@ export function regenerateSection(section, options = {}) {
   if (modeChanged) wanted.add('chords');
   music.rootPc = toRoot;
   music.scaleId = toScale;
-  if (bar) {
+  // A new bar, or a variation that changed how long a chord is held, means the
+  // grid under the whole section has moved.
+  if (bar || edit.regrid) {
     music.stepsPerChord = Math.max(1, Math.round(grid.stepsPerBar * (music.barsPerChord || 1)));
   }
 
@@ -278,13 +296,23 @@ export function regenerateSection(section, options = {}) {
     rhythm.kit = otherThan(rng, DRUM_KITS, current.kit);
   }
 
-  return {
+  const rolled = {
     ...source,
     music,
     rhythm,
     ...(bar ? { meter: clone(bar) } : {}),
     savedAt: Date.now(),
   };
+
+  // Now that the parts have actually been written, anything the section still
+  // claims about what it is missing can be checked against what it has. This
+  // has to happen here rather than while the variations were applied: a section
+  // told to have a tune has not got one yet at that point.
+  const traits = pruneStaleTraits(rolled);
+  if (traits.length) rolled.traits = traits;
+  else delete rolled.traits;
+
+  return rolled;
 }
 
 /** "chords, melody and bass" — what a regeneration is about to touch. */

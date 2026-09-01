@@ -22,6 +22,7 @@ import { defaultHumanize, normalizeHumanize } from './music/humanize.js';
 import { defaultTuning, normalizeTuning } from './music/tuning.js';
 import { defaultMix, normalizeMix } from './music/mixer.js';
 import { initMixer } from './ui/mixer-panel.js';
+import { initPrompts } from './ui/prompt.js';
 import { randomSeed } from './rng.js';
 
 const STORAGE_KEY = 'cut-up:v1';
@@ -190,6 +191,10 @@ function save() {
   }, 250);
 }
 
+// The two dialogs the whole app asks its questions through — a name, and a
+// last chance before something goes for good.
+initPrompts();
+
 const audio = new AudioEngine();
 const ctx = {
   state,
@@ -273,6 +278,15 @@ ctx.library = libraryPanel;
 // on the shelf, and composing asks it for the model.
 const trainPanel = initTrain(ctx);
 ctx.taste = () => trainPanel.model();
+// The thumbs on the Song and Library cards. The Train tab owns the file they
+// are written to, so it owns the buttons' behaviour; the cards only draw them.
+ctx.marks = trainPanel.marks;
+// And when one is pressed — or when the file has finished loading and the
+// answers you gave last week are known — every card that shows one is redrawn.
+ctx.onMarksChange = () => {
+  songPanel.render();
+  if (state.tab === 'library') ctx.library?.refresh();
+};
 // The export dialog is shared: the transport, the Song tab and every card on
 // the shelf open the same one.
 const exportPanel = initExportAudio(ctx);

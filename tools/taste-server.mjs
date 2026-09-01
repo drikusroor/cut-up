@@ -22,7 +22,7 @@ import {
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { answerCount, parseJudgements, toLine } from '../src/ml/judgements.js';
+import { isJudgement, parseJudgements, toLine } from '../src/ml/judgements.js';
 import { describeReport, trainTaste } from '../src/ml/train.js';
 import { JUDGEMENTS_PATH, MODEL_PATH } from './train-taste.mjs';
 
@@ -65,10 +65,10 @@ async function loadJudgements() {
   }
 }
 
-/** POST /api/judgements — one round, appended. */
+/** POST /api/judgements — one round or one mark, appended. */
 async function recordJudgement(req, res) {
   const record = JSON.parse(await readBody(req));
-  if (!record?.seed || !answerCount(record)) return send(res, 400, { error: 'nothing answered' });
+  if (!isJudgement(record)) return send(res, 400, { error: 'nothing answered' });
   await mkdir(dirname(JUDGEMENTS_PATH), { recursive: true });
   // Appending rather than rewriting is what makes this safe to run while you
   // have the file open, and what makes two sessions on two machines merge by

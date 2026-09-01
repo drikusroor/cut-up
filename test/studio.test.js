@@ -22,6 +22,21 @@ import { Synth } from '../src/music/synth.js';
 import {
   allAspects, describeAspects, REGEN_ASPECTS, regenerateSection,
 } from '../src/music/regenerate.js';
+import {
+  applyVariations,
+  describeSectionState,
+  describeVariations,
+  DIALS,
+  getVariation,
+  KEY_MOVES,
+  keyMove,
+  MOVES,
+  readVariations,
+  sectionTraitLine,
+  SWITCHES,
+  VARIATION_GROUPS,
+  variationApplies,
+} from '../src/music/variations.js';
 import { makeSection } from '../src/music/sections.js';
 import { composeSong } from '../src/music/compose.js';
 import {
@@ -328,6 +343,226 @@ test('the same seed is the same take twice', () => {
   assert.deepEqual(once.music, twice.music);
   assert.deepEqual(once.rhythm.pattern, twice.rhythm.pattern);
   assert.notDeepEqual(once.music.chords, other.music.chords);
+});
+
+// --- the variations ---------------------------------------------------------
+
+test('every variation belongs to a group the dialog draws', () => {
+  const groups = new Set(VARIATION_GROUPS.map((group) => group.id));
+  for (const variation of [...SWITCHES, ...MOVES, ...DIALS]) {
+    assert.ok(groups.has(variation.group), `${variation.id} is in no group`);
+    assert.ok(variation.label && variation.hint, `${variation.id} says nothing about itself`);
+  }
+  // Ids are what a saved edit is written in terms of, so they have to be unique.
+  const ids = [...SWITCHES, ...MOVES, ...DIALS].map((variation) => variation.id);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('a switch reads what the section is doing, both ways round', () => {
+  const section = fullSection(composed());
+  const state = readVariations(section);
+  assert.equal(state.switches.noBass, false);
+  assert.equal(state.switches.noTune, false);
+
+  const stripped = regenerateSection(section, {
+    aspects: [],
+    variations: { switches: { noBass: true, noDrums: true, noTune: true } },
+  });
+  assert.deepEqual(stripped.music.bass, []);
+  assert.equal(stripped.music.bassOn, false);
+  assert.deepEqual(stripped.rhythm.trackIds, []);
+  assert.deepEqual(stripped.music.melody, []);
+  assert.deepEqual(readVariations(stripped).switches, {
+    noBass: true, noDrums: true, noTune: true,
+  });
+});
+
+test('unticking a switch puts the part back, written fresh', () => {
+  const section = fullSection(composed());
+  const stripped = regenerateSection(section, {
+    aspects: [],
+    variations: { switches: { noBass: true, noDrums: true, noTune: true } },
+  });
+  const restored = regenerateSection(stripped, {
+    aspects: [],
+    variations: { switches: { noBass: false, noDrums: false, noTune: false } },
+    seed: 'back',
+  });
+  assert.ok(restored.music.bass.length, 'the bass came back');
+  assert.ok(restored.music.melody.length, 'the tune came back');
+  assert.ok(restored.rhythm.pattern.tracks.length, 'the drums came back');
+  assert.deepEqual(describeSectionState(restored).filter((trait) => trait.startsWith('no')), []);
+});
+
+test('a state a switch owns is never left claimed in the stored traits', () => {
+  const section = { ...fullSection(composed()), traits: ['no bass', 'a modal vamp'] };
+  const rolled = regenerateSection(section, {
+    aspects: [],
+    variations: { switches: { noBass: false } },
+    seed: 'x',
+  });
+  // The stored line keeps the history and drops the claim about the state; the
+  // card asks the music itself about that.
+  assert.deepEqual(rolled.traits, ['a modal vamp']);
+  assert.ok(!describeSectionState(rolled).includes('no bass'));
+});
+
+test('a dial is read off the section and written back to it', () => {
+  const section = fullSection(composed());
+  const quiet = regenerateSection(section, {
+    aspects: [],
+    variations: { dials: { dynamics: 0.8, tempoScale: 0.9 } },
+  });
+  assert.equal(quiet.dynamics, 0.8);
+  assert.equal(quiet.tempoScale, 0.9);
+  assert.ok(describeSectionState(quiet).includes('played at 80%'));
+  assert.ok(describeSectionState(quiet).includes('taken at 90% of the tempo'));
+
+  // Back to 1 is "nothing to say", not "a dial set to one".
+  const plain = regenerateSection(quiet, {
+    aspects: [],
+    variations: { dials: { dynamics: 1, tempoScale: 1 } },
+  });
+  assert.equal(plain.dynamics, undefined);
+  assert.equal(plain.tempoScale, undefined);
+  assert.deepEqual(describeSectionState(plain), []);
+});
+
+test('a move that changes the settings also writes the music again', () => {
+  const section = fullSection(composed());
+  // Nothing is asked to roll, so anything that moves moved because the
+  // variation said it had to.
+  const busier = regenerateSection(section, {
+    aspects: [],
+    variations: { moves: ['busier'] },
+    seed: 'busy',
+  });
+  assert.ok(busier.music.density > section.music.density);
+  assert.notDeepEqual(busier.music.melody, section.music.melody);
+  assert.ok(busier.traits.includes('busier, and more chromatic'));
+});
+
+test('the tune goes up an octave without being rewritten', () => {
+  const section = fullSection(composed());
+  const up = regenerateSection(section, {
+    aspects: [],
+    variations: { moves: ['octave'] },
+  });
+  assert.equal(up.music.melody.length, section.music.melody.length);
+  const steps = new Set(up.music.melody.map((note, i) => note.midi - section.music.melody[i].midi));
+  assert.deepEqual([...steps], [12]);
+  assert.equal(up.music.rangeLow, section.music.rangeLow + 12);
+});
+
+test('halving a section keeps the front of its progression', () => {
+  const section = fullSection(composed());
+  if (section.music.chords.length < 4) return;
+  const half = regenerateSection(section, { aspects: [], variations: { moves: ['halve'] }, seed: 'h' });
+  const want = Math.max(2, Math.round(section.music.chords.length / 2));
+  assert.equal(half.music.chords.length, want);
+  assert.deepEqual(half.music.chords, section.music.chords.slice(0, want));
+  assert.equal(half.music.voicings.length, want);
+});
+
+test('a move that cannot apply is not offered and does nothing if asked for', () => {
+  const silent = makeSection({
+    name: 'Count-in',
+    kind: 'intro',
+    music: {
+      rootPc: 0, scaleId: 'minor', chords: [], melody: [], melodyBase: [], bass: [], length: 4,
+    },
+    rhythm: {
+      style: 'euclid', bars: 1, density: 0.5, variation: 0.2, trackIds: ['kick', 'hat'],
+    },
+    meter: { beats: 4, unit: 4 },
+  });
+  assert.equal(variationApplies(getVariation('octave'), silent), false);
+  assert.ok(!readVariations(silent).available.includes('octave'));
+  const rolled = regenerateSection(silent, { aspects: [], variations: { moves: ['octave'] } });
+  assert.deepEqual(rolled.music.melody, []);
+  assert.ok(!(rolled.traits || []).includes('the tune an octave up'));
+});
+
+test('applying variations twice from the same seed lands in the same place', () => {
+  const section = fullSection(composed());
+  const wanted = { switches: { noDrums: true }, moves: ['busier', 'colour'], dials: { dynamics: 0.7 } };
+  const once = regenerateSection(section, { aspects: [], variations: wanted, seed: 'twice' });
+  const twice = regenerateSection(section, { aspects: [], variations: wanted, seed: 'twice' });
+  assert.deepEqual(once.music, twice.music);
+  assert.deepEqual(once.rhythm, twice.rhythm);
+});
+
+test('applyVariations reports what it disturbed', () => {
+  const section = fullSection(composed());
+  const draft = JSON.parse(JSON.stringify(section));
+  const edit = applyVariations(draft, { moves: ['busier', 'kit'] }, { rng: () => 0.5 });
+  assert.ok(edit.rolls.has('melody'));
+  assert.ok(edit.rolls.has('drums'));
+  // In catalogue order rather than the order they were asked for, so two moves
+  // always compose the same way round.
+  assert.deepEqual(edit.traits, ['a different kit', 'busier, and more chromatic']);
+});
+
+test('the key shortcuts answer with a key rather than changing anything', () => {
+  assert.deepEqual(keyMove('relative', { rootPc: 9, scaleId: 'minor' }), { rootPc: 0, scaleId: 'major' });
+  assert.deepEqual(keyMove('parallel', { rootPc: 9, scaleId: 'minor' }), { rootPc: 9, scaleId: 'major' });
+  assert.deepEqual(keyMove('fourth', { rootPc: 9, scaleId: 'minor' }), { rootPc: 2, scaleId: 'minor' });
+  assert.deepEqual(keyMove('semitone', { rootPc: 11, scaleId: 'major' }), { rootPc: 0, scaleId: 'major' });
+  // An id it does not know leaves the key alone rather than inventing one.
+  assert.deepEqual(keyMove('nonsense', { rootPc: 3, scaleId: 'dorian' }), { rootPc: 3, scaleId: 'dorian' });
+  assert.ok(KEY_MOVES.every((move) => move.label && move.hint));
+});
+
+test('a compound description is not repeated by the switches under it', () => {
+  const drumsOnly = makeSection({
+    name: 'Count-in',
+    kind: 'intro',
+    music: {
+      rootPc: 0, scaleId: 'minor', chords: [], melody: [], melodyBase: [], bass: [], length: 4,
+    },
+    rhythm: {
+      style: 'euclid', bars: 1, density: 0.5, variation: 0.2, trackIds: ['kick', 'hat'],
+    },
+    meter: { beats: 4, unit: 4 },
+    traits: ['drums alone'],
+  });
+  // "Drums alone" already says there is no bass and no tune — and says the one
+  // thing the switches cannot, which is that there are no chords either.
+  assert.deepEqual(sectionTraitLine(drumsOnly), ['drums alone']);
+  // A section that says nothing about itself still gets the derived half. The
+  // bass is not switched off here, it simply has no notes — which is a different
+  // fact, and not one the switch claims.
+  assert.deepEqual(sectionTraitLine({ ...drumsOnly, traits: [] }), ['no tune']);
+  assert.deepEqual(
+    sectionTraitLine({ ...drumsOnly, traits: [], music: { ...drumsOnly.music, bassOn: false } }),
+    ['no bass', 'no tune'],
+  );
+});
+
+test('a stored claim about the music is dropped when it stops being true', () => {
+  const intro = composed().sections.find((section) => (section.traits || []).includes('chords on their own'));
+  if (!intro) return;
+
+  // Still true after a roll that did not give it a tune, so it still says so —
+  // and it says more than the switches can, since it also means "no bass".
+  const rolled = regenerateSection(intro, { aspects: ['drums'], seed: 'a' });
+  assert.ok(rolled.traits.includes('chords on their own'));
+
+  // And gone the moment it is given one, without anybody having to remember to
+  // go and edit the line.
+  const tuned = regenerateSection(intro, {
+    aspects: [],
+    variations: { switches: { noTune: false } },
+    seed: 'a',
+  });
+  assert.ok(tuned.music.melody.length);
+  assert.ok(!(tuned.traits || []).includes('chords on their own'));
+});
+
+test('what a set of variations is about to do, in words', () => {
+  assert.equal(describeVariations([]), '');
+  assert.equal(describeVariations(['busier']), 'busier, and more chromatic');
+  assert.equal(describeVariations(['octave', 'sparser']), 'more air in it and the tune an octave up');
 });
 
 test('what a roll is about to touch, in words', () => {

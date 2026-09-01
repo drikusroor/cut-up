@@ -13,6 +13,8 @@
 import {
   $, download, el, toast,
 } from './dom.js';
+import { askText, confirmAction } from './prompt.js';
+import { markButtons, songShape } from './marks.js';
 import {
   applySong,
   byteSize,
@@ -147,8 +149,16 @@ export function initLibrary(ctx, panels) {
    */
   async function openSong(record) {
     const risky = state.sections.length || state.music.chords.length;
-    if (risky && !window.confirm(`Open “${record.name}”? What you have open now is replaced — save it first if you want to keep it.`)) {
-      return;
+    if (risky) {
+      const yes = await confirmAction({
+        title: `Open “${record.name}”?`,
+        body: 'Everything you have open now — the sections in the drawer, the running order, '
+          + 'the mix and the words — is replaced by what is in this song. Save the song you '
+          + 'have first if you want to be able to come back to it.',
+        confirmLabel: 'Open it',
+        cancelLabel: 'Stay here',
+      });
+      if (!yes) return;
     }
     applySong(state, record.song);
     // Every panel is holding the old state; each one is told to read it again.
@@ -175,7 +185,60 @@ export function initLibrary(ctx, panels) {
     return copy;
   }
 
+  /**
+   * Renames something on the shelf.
+   *
+   * A song carries its own name inside it as well — it is written into the
+   * `.cutsong` file and shown when the song is opened — so both are set, or a
+   * renamed song would go back to its old name the moment it was exported.
+   */
+  async function renameRecord(store, record) {
+    const song = store === STORES.songs;
+    const name = await askText({
+      title: `Rename “${record.name}”`,
+      body: song
+        ? 'The name the song is filed under, and the one it takes with it into a file.'
+        : 'The name this idea sits under on the shelf. Sections you drop into a song keep it, '
+          + 'unless that letter is already taken in there.',
+      label: 'Called',
+      value: record.name,
+      confirmLabel: 'Rename',
+    });
+    if (!name || name === record.name) return;
+    const updated = { ...record, name };
+    if (song && updated.song) updated.song = { ...updated.song, name };
+    if (!song && updated.section) updated.section = { ...updated.section, name };
+    // Whatever it is called now, it was saved when it was saved.
+    await put(store, { ...updated, savedAt: record.savedAt });
+    // The name box at the top is showing this song if it is the one you saved.
+    if (song && ui.songName.value === record.name) ui.songName.value = name;
+    await refresh();
+    toast(`Renamed to “${name}”`);
+  }
+
+  /**
+   * Takes something off the shelf for good.
+   *
+   * The library is the one place in the app where deleting something is not
+   * recoverable by rolling the dice again — a song on this shelf may be the only
+   * copy of an evening's work — so it asks, and it says what it is about to
+   * lose rather than only that it is about to lose something.
+   */
   async function removeRecord(store, record) {
+    const song = store === STORES.songs;
+    const meta = record.meta || {};
+    const what = song
+      ? `${meta.sections ?? 0} section${meta.sections === 1 ? '' : 's'}, the running order, `
+        + 'the tempo, the mix and the words it was cut up from'
+      : 'the chords, the tune, the hand edits and the drum pattern in it';
+    const yes = await confirmAction({
+      title: `Delete “${record.name}”?`,
+      body: `Everything in it — ${what} — goes with it, and there is no undo. `
+        + `Press ⤓ File first if you want a copy on disk${song && state.sections.length
+          ? '; whatever you have open on the other tabs is untouched either way' : ''}.`,
+      confirmLabel: 'Delete it',
+    });
+    if (!yes) return;
     await remove(store, record.id);
     await refresh();
     toast(`Deleted “${record.name}”`);
@@ -257,9 +320,20 @@ export function initLibrary(ctx, panels) {
         el('button', {
           type: 'button', class: 'btn ghost', title: 'Put this song back on the tabs', onclick: () => openSong(record),
         }, ['Open']),
+        // A song you kept is a song you thought was worth keeping, and that is
+        // worth telling the model — mostly about the order it is in.
+        markButtons(ctx, {
+          ...songShape(record.song?.sections, record.song?.arrangement),
+          name: record.name,
+          about: `“${record.name}”`,
+          digest: `${record.name} · ${meta.sections ?? 0} sections`,
+        }),
         el('button', {
           type: 'button', class: 'btn ghost', title: `Write it out as a ${SONG_EXT} file`, onclick: () => exportSong(record),
         }, ['⤓ File']),
+        el('button', {
+          type: 'button', class: 'btn ghost', title: 'Call it something else', onclick: () => renameRecord(STORES.songs, record),
+        }, ['✎ Rename']),
         el('button', {
           type: 'button', class: 'btn ghost danger', title: 'Take it off the shelf', onclick: () => removeRecord(STORES.songs, record),
         }, ['🗑']),
@@ -294,9 +368,18 @@ export function initLibrary(ctx, panels) {
         el('button', {
           type: 'button', class: 'btn ghost', title: 'Copy it into the song you have open', onclick: () => addSection(record),
         }, ['＋ Song']),
+        markButtons(ctx, {
+          sections: [record.section],
+          name: record.name,
+          about: `“${record.name}”`,
+          digest: `${record.name} · ${meta.key || ''}`.trim(),
+        }),
         el('button', {
           type: 'button', class: 'btn ghost', title: `Write it out as a ${SECTION_EXT} file`, onclick: () => exportSection(record.section),
         }, ['⤓ File']),
+        el('button', {
+          type: 'button', class: 'btn ghost', title: 'Call it something else', onclick: () => renameRecord(STORES.sections, record),
+        }, ['✎ Rename']),
         el('button', {
           type: 'button', class: 'btn ghost danger', title: 'Take it off the shelf', onclick: () => removeRecord(STORES.sections, record),
         }, ['🗑']),

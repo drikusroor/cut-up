@@ -24,7 +24,10 @@ import {
   normalizeComposeSettings,
 } from '../music/compose.js';
 import { allAspects, describeAspects, regenerateSection } from '../music/regenerate.js';
+import { describeVariations, sectionTraitLine } from '../music/variations.js';
 import { initRegenerateDialog } from './regenerate-dialog.js';
+import { askText, confirmAction } from './prompt.js';
+import { markButtons, songShape } from './marks.js';
 import { randomSeed } from '../rng.js';
 import { chordSymbol, keyLabel, keyUsesFlats } from '../music/theory.js';
 import { meterInfo, meterLabel } from '../music/meter.js';
@@ -65,6 +68,7 @@ export function initSong(ctx, panels) {
     sections: $('#sections-out'),
     arrangement: $('#arrangement-out'),
     summary: $('#song-summary'),
+    songMark: $('#song-mark'),
     compose: $('#compose-song'),
     letters: $('#compose-letters'),
     minutes: $('#compose-minutes'),
@@ -218,6 +222,11 @@ export function initSong(ctx, panels) {
     const { fork: asFork = false, ...rest } = options;
     const aspects = rest.aspects || allAspects();
     const rolled = regenerateSection(section, rest);
+    // A regeneration that rolled nothing but changed something — a section sent
+    // off to have no bass and be played at 80% — should not report itself as
+    // having rolled nothing.
+    const moves = describeVariations(rest.variations?.moves || []);
+    const what = aspects.length ? describeAspects(aspects) : (moves || 'the variations');
 
     if (asFork) {
       const copy = forkSection(rolled, state.sections);
@@ -225,7 +234,7 @@ export function initSong(ctx, panels) {
       state.arrangement.push({ sectionId: copy.id, repeats: 1 });
       render();
       save();
-      toast(`Rolled ${describeAspects(aspects)} → ${copy.name}`);
+      toast(`Rolled ${what} → ${copy.name}`);
       ctx.refreshPlayback?.();
       return copy;
     }
@@ -237,19 +246,70 @@ export function initSong(ctx, panels) {
     if (state.currentSectionId === rolled.id) loadSection(rolled, { announce: false });
     render();
     save();
-    toast(`${rolled.name}: rolled ${describeAspects(aspects)}`);
+    toast(`${rolled.name}: rolled ${what}`);
     ctx.refreshPlayback?.();
     return rolled;
   }
 
   const regenDialog = initRegenerateDialog((section, options) => regenerate(section, options));
 
-  function removeSection(section) {
+  /**
+   * Renames a section, everywhere it is called that.
+   *
+   * The running order draws its chips from the sections themselves, so there is
+   * nothing else to update — but the name box at the top is showing this
+   * section if it is the open one, and it has to be told.
+   */
+  async function renameSection(section) {
+    const name = await askText({
+      title: `Rename ${section.name}`,
+      body: 'What a section is called is how it reads in the running order and on the '
+        + 'shelf. Nothing about the music changes.',
+      label: 'Called',
+      value: section.name,
+      confirmLabel: 'Rename',
+    });
+    if (!name || name === section.name) return;
+    const taken = state.sections.some((other) => other.id !== section.id && other.name === name);
+    section.name = name;
+    section.savedAt = Date.now();
+    render();
+    save();
+    ctx.onSongChange?.();
+    toast(taken
+      ? `Renamed to ${name} — which is another section's name too, so mind which is which`
+      : `Renamed to ${name}`);
+  }
+
+  /**
+   * Throws a section away.
+   *
+   * Deleting one takes it out of the running order as well, and there is no
+   * undo — so it says how many places in the song are about to lose it, which
+   * is the fact you actually want before answering.
+   */
+  async function removeSection(section) {
+    const appearances = state.arrangement.filter((item) => item.sectionId === section.id).length;
+    const where = appearances
+      ? ` It is in the running order ${appearances === 1 ? 'once' : `${appearances} times`}, and `
+        + `${appearances === 1 ? 'that goes' : 'those go'} with it.`
+      : ' It is not in the running order.';
+    const shelved = ' If you want to keep it for another song, press 📚 first and it goes on the '
+      + 'Library shelf, which this does not touch.';
+    const yes = await confirmAction({
+      title: `Delete section ${section.name}?`,
+      body: `${section.name} and everything in it — the chords, the tune, your hand edits and `
+        + `the drum pattern — go for good.${where}${shelved}`,
+      confirmLabel: 'Delete it',
+    });
+    if (!yes) return;
     state.sections = state.sections.filter((s) => s.id !== section.id);
     state.arrangement = state.arrangement.filter((item) => item.sectionId !== section.id);
     if (state.currentSectionId === section.id) state.currentSectionId = null;
     render();
     save();
+    ctx.refreshPlayback?.();
+    toast(`Deleted ${section.name}`);
   }
 
   // --- arrangement ----------------------------------------------------------
@@ -445,17 +505,6 @@ export function initSong(ctx, panels) {
 
   // --- rendering ------------------------------------------------------------
 
-  /** The line under a composed card: what it is, and how it is played. */
-  function sectionTraits(section) {
-    const traits = [...(section.traits || [])];
-    const percent = (value) => `${Math.round(value * 100)}%`;
-    const dynamics = section.dynamics ?? 1;
-    if (dynamics < 0.98 || dynamics > 1.02) traits.push(`played at ${percent(dynamics)}`);
-    const tempoScale = section.tempoScale ?? 1;
-    if (tempoScale !== 1) traits.push(`taken at ${percent(tempoScale)} of the tempo`);
-    return traits;
-  }
-
   function renderSections() {
     if (!state.sections.length) {
       ui.sections.replaceChildren(el('p', { class: 'hint' }, [
@@ -466,6 +515,7 @@ export function initSong(ctx, panels) {
 
     ui.sections.replaceChildren(...state.sections.map((section) => {
       const info = summarise(section);
+      const traits = sectionTraitLine(section);
       const isCurrent = section.id === state.currentSectionId;
       return el('div', {
         class: `section-card kind-${section.kind}${isCurrent ? ' is-current' : ''}`,
@@ -479,10 +529,9 @@ export function initSong(ctx, panels) {
           + `${info.bass ? ` · ${info.bass} on the bass` : ''}` }),
         el('div', { class: 'section-chords', text: info.chords || '—' }),
         el('div', { class: 'section-meta', text: info.voices }),
-        // A composed section says what makes it different from the others.
-        section.traits?.length
-          ? el('div', { class: 'section-traits', text: sectionTraits(section).join(' · ') })
-          : null,
+        // A section says what makes it different from the others — whether the
+        // composer made it different or you did.
+        traits.length ? el('div', { class: 'section-traits', text: traits.join(' · ') }) : null,
         el('div', { class: 'section-actions' }, [
           el('button', {
             type: 'button', class: 'btn ghost', title: 'Play just this section', onclick: () => ctx.playCards?.([section], { meter: section.meter }),
@@ -490,9 +539,20 @@ export function initSong(ctx, panels) {
           el('button', {
             type: 'button', class: 'btn ghost', title: 'Add it to the running order', onclick: () => addToSong(section),
           }, ['＋ Song']),
+          // Two clicks' worth of teaching, on music you were listening to
+          // anyway — see ui/marks.js.
+          markButtons(ctx, {
+            sections: [section],
+            name: section.name,
+            about: `section ${section.name}`,
+            digest: `${section.name} · ${info.key} · ${info.bars} bars`,
+          }),
           el('button', {
             type: 'button', class: 'btn ghost', title: 'Open it in the other tabs', onclick: () => loadSection(section),
           }, ['Edit']),
+          el('button', {
+            type: 'button', class: 'btn ghost', title: 'Call it something else', onclick: () => renameSection(section),
+          }, ['✎ Rename']),
           el('button', {
             type: 'button', class: 'btn ghost', title: 'Copy it into a new section', onclick: () => fork(section),
           }, ['Fork']),
@@ -541,6 +601,9 @@ export function initSong(ctx, panels) {
     const plan = buildSongPlan(state.sections, state.arrangement);
     ui.prevSection.disabled = !plan.blocks.length;
     ui.nextSection.disabled = !plan.blocks.length;
+    // Before the early return below, or clearing the song would leave a thumb
+    // behind for a song that is no longer there.
+    renderSongMark(plan);
 
     if (!plan.blocks.length) {
       ui.arrangement.replaceChildren(el('p', { class: 'hint' }, [
@@ -587,6 +650,32 @@ export function initSong(ctx, panels) {
     ui.summary.textContent = `${plan.blocks.length} parts · ${clockTime(songSeconds(plan))} · `
       + `${plan.blocks.map((b) => (b.repeats > 1 ? `${b.name}×${b.repeats}` : b.name)).join(' → ')}`;
     return plan;
+  }
+
+  /**
+   * A thumb on the whole thing.
+   *
+   * Different from a thumb on each of its sections, and the difference is the
+   * point: what a song mark carries is mostly the *order* — this went into that
+   * and it was right — which is the half of songwriting the section-by-section
+   * questions on the Train tab can never get at.
+   */
+  function renderSongMark(plan) {
+    if (!plan.blocks.length) {
+      ui.songMark.replaceChildren();
+      return;
+    }
+    const shape = songShape(state.sections, state.arrangement);
+    ui.songMark.replaceChildren(
+      el('span', { class: 'hint', text: 'Was this a good song?' }),
+      markButtons(ctx, {
+        ...shape,
+        name: 'The song',
+        about: 'this song',
+        digest: `${plan.blocks.length} parts · ${clockTime(songSeconds(plan))} · `
+          + plan.blocks.map((block) => block.name).join(' '),
+      }),
+    );
   }
 
   function renderCurrent() {

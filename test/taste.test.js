@@ -11,7 +11,8 @@ import {
   fitScaler, neutralModel, PAIR_HEAD, SECTION_HEADS, TasteModel,
 } from '../src/ml/model.js';
 import {
-  answerCount, makeJudgement, mergeJudgements, parseJudgements, serializeJudgements,
+  answerCount, isJudgement, isMark, makeJudgement, makeMark, MARK_WEIGHTS, markDigest,
+  markJoins, mergeJudgements, parseJudgements, serializeJudgements, trimForMark,
   usableJudgements,
 } from '../src/ml/judgements.js';
 import {
@@ -464,6 +465,190 @@ test('with a model it auditions, and still writes the same song from the same se
   // And what comes out is still an ordinary, playable song.
   const ids = new Set(a.sections.map((section) => section.id));
   for (const item of a.arrangement) assert.ok(ids.has(item.sectionId));
+});
+
+// --- the thumbs -------------------------------------------------------------
+
+/** Whatever the composer wrote from this seed, as ordinary sections. */
+function songSections(seed = 'marks', minutes = 1.5) {
+  return composeSong({ settings: { seed, minutes } }).sections;
+}
+
+test('a mark carries the music, because there is no seed to point at', () => {
+  const [section] = songSections();
+  const mark = makeMark({ sections: [section], rating: 1, name: section.name });
+
+  assert.ok(isMark(mark));
+  assert.ok(isJudgement(mark));
+  assert.equal(mark.rating, 1);
+  assert.equal(mark.weight, MARK_WEIGHTS.section);
+  assert.equal(mark.music.length, 1);
+  // Enough of it for the ear to work on...
+  assert.deepEqual(mark.music[0].music.chords, section.music.chords);
+  assert.deepEqual(mark.music[0].rhythm.pattern, section.rhythm.pattern);
+  assert.equal(sectionFeatures(mark.music[0]).values.length, sectionFeatureNames().length);
+  // ...and none of what it never looks at, the words above all.
+  assert.equal(mark.music[0].music.vocal, undefined);
+  assert.equal(mark.music[0].music.melodyBase, undefined);
+  assert.equal(mark.music[0].music.melodyEdits, undefined);
+});
+
+test('a mark is named by the music, so changing your mind replaces it', () => {
+  const [section] = songSections();
+  const up = makeMark({ sections: [section], rating: 1 });
+  const down = makeMark({ sections: [section], rating: 0 });
+  assert.equal(up.id, down.id, 'the same music is the same opinion to overwrite');
+
+  // Last one in wins, which is what merging is for.
+  const merged = mergeJudgements([up], [down]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].rating, 0);
+
+  // Different music is a different opinion, and the name it is filed under is
+  // not part of the music.
+  const other = songSections('elsewhere')[0];
+  assert.notEqual(markDigest([section]), markDigest([other]));
+  assert.equal(markDigest([section]), markDigest([{ ...section, name: 'Something else' }]));
+});
+
+test('a song mark stores its shape rather than five copies of the chorus', () => {
+  const sections = songSections().slice(0, 3);
+  const mark = makeMark({ sections, order: [0, 1, 0, 1, 2, 1], rating: 1 });
+  assert.equal(mark.music.length, 3);
+  assert.deepEqual(mark.order, [0, 1, 0, 1, 2, 1]);
+  assert.equal(mark.weight, MARK_WEIGHTS.song, 'a whole song says less about each part');
+  // Every distinct seam, once. A section into itself is a repeat, not a join.
+  assert.deepEqual(markJoins(mark), [[0, 1], [1, 0], [1, 2], [2, 1]]);
+  assert.equal(answerCount(mark), 3 + 4);
+
+  // One section is one opinion and no seams at all.
+  const single = makeMark({ sections: [sections[0]], rating: 0 });
+  assert.equal(single.order, undefined);
+  assert.deepEqual(markJoins(single), []);
+  assert.equal(answerCount(single), 1);
+});
+
+test('marks survive the file, and outlive the dealer', () => {
+  const sections = songSections().slice(0, 2);
+  const records = [
+    makeJudgement({ seed: 'abc', cards: 2, sections: { A: { overall: 1 } } }),
+    makeMark({ sections: [sections[0]], rating: 1, name: 'A' }),
+    makeMark({ sections, order: [0, 1, 0], rating: 0, name: 'The song' }),
+  ];
+  const { judgements, skipped } = parseJudgements(serializeJudgements(records));
+  assert.equal(judgements.length, 3);
+  assert.equal(skipped, 0);
+  assert.deepEqual(judgements[1].music[0].music.chords, trimForMark(sections[0]).music.chords);
+
+  // A round from an older dealer is kept in the file but not trained on; a mark
+  // brought its own music, so there is no dealer for it to be out of step with.
+  const stale = [...records.map((record) => ({ ...record })), { ...records[0], id: 'old', dealer: 0 }];
+  const usable = usableJudgements(stale);
+  assert.equal(usable.length, 3);
+  assert.ok(usable.every((record) => record.id !== 'old'));
+});
+
+test('a mark becomes rows the trainer can eat, weighted below a rated round', () => {
+  const sections = songSections().slice(0, 3);
+  const records = [
+    makeMark({ sections: [sections[0]], rating: 1 }),
+    makeMark({ sections, order: [0, 1, 2], rating: 0 }),
+  ];
+  const dataset = buildDataset(records);
+  assert.equal(dataset.rounds.length, 2);
+  assert.equal(dataset.marks, 2);
+
+  const [one, song] = dataset.rounds;
+  // Only the overall head. A thumb never said which of the tune, the chords and
+  // the groove it meant, and inventing three opinions from one would be a lie.
+  assert.deepEqual(Object.keys(one.sections[0].targets), ['overall']);
+  assert.equal(one.sections[0].targets.overall, 1);
+  assert.equal(one.sections[0].weight, MARK_WEIGHTS.section);
+  assert.ok(one.sections[0].weight < 1, 'a thumb pushes less than a rated hand');
+  assert.deepEqual(one.pairs, []);
+
+  assert.equal(song.sections.length, 3);
+  assert.equal(song.pairs.length, 2);
+  assert.equal(song.sections[0].weight, MARK_WEIGHTS.song);
+  assert.equal(song.pairs[0].weight, MARK_WEIGHTS.join);
+  assert.ok(song.pairs[0].weight > song.sections[0].weight,
+    'what a song mark really says is that the order worked');
+});
+
+/** A card per seed, and whether it is in a minor-ish key — a learnable opinion. */
+function thumbCards(count, prefix = 'thumb') {
+  const cards = [];
+  for (let i = 0; i < count; i++) {
+    const [card] = dealRound({ seed: `${prefix}${i}` }).cards;
+    const minorish = ['minor', 'dorian', 'phrygian', 'harmonicMinor', 'blues']
+      .includes(card.section.music.scaleId);
+    cards.push({ section: card.section, likes: minorish ? 1 : 0 });
+  }
+  return cards;
+}
+
+test('when two opinions disagree, the heavier one wins', () => {
+  // The honest statement of what a weight is. Adam divides the batch by the sum
+  // of the weights, so making *everything* lighter changes nothing — a file of
+  // nothing but thumbs is learned from at full strength, which is right, since
+  // it is all you have said. A weight only ever means "against the other rows",
+  // and this is that: the same music, told two contradictory things, and the
+  // model ends up agreeing with whichever was said louder.
+  const cards = thumbCards(40, 'argue');
+  const half = Math.floor(cards.length / 2);
+  // The first half is always the loud one. What changes between the two runs is
+  // which of them is telling the truth about the rule underneath.
+  const records = (loudIsRight) => cards.map((card, index) => {
+    const loud = index < half;
+    const truthful = loud === loudIsRight;
+    return makeMark({
+      sections: [card.section],
+      rating: truthful ? card.likes : 1 - card.likes,
+      weight: loud ? 1 : 0.15,
+    });
+  });
+  const lean = (model) => {
+    const wanted = cards.filter((card) => card.likes === 1);
+    const rest = cards.filter((card) => card.likes === 0);
+    const mean = (list) => list.reduce(
+      (total, card) => total + model.scoreSection(card.section).overall, 0,
+    ) / Math.max(1, list.length);
+    return mean(wanted) - mean(rest);
+  };
+
+  const agrees = trainTaste(records(true), { minRounds: 4, folds: 2, maxEpochs: 120 }).model;
+  const disagrees = trainTaste(records(false), { minRounds: 4, folds: 2, maxEpochs: 120 }).model;
+  assert.ok(lean(agrees) > 0, `the heavy half was ignored: ${lean(agrees).toFixed(3)}`);
+  assert.ok(lean(disagrees) < 0, `the light half won: ${lean(disagrees).toFixed(3)}`);
+});
+
+test('thumbs alone can teach it something, and noise still cannot', () => {
+  const rng = makeRng('thumb-noise');
+  const cards = thumbCards(70);
+  const records = (random) => cards.map((card) => makeMark({
+    sections: [card.section],
+    rating: random ? Math.round(rng()) : card.likes,
+  }));
+
+  const taught = trainTaste(records(false), { maxEpochs: 200 });
+  assert.equal(taught.report.marks, taught.report.judgements);
+  assert.ok(taught.report.holdout.ranking > 0.62,
+    `thumbs only managed ${taught.report.holdout.ranking?.toFixed(3)}`);
+  assert.match(describeReport(taught.report), /0 rounds and \d+ marks/);
+
+  const noise = trainTaste(records(true), { maxEpochs: 200 });
+  assert.ok(noise.model.confidence < 0.35,
+    `random thumbs were given ${noise.model.confidence.toFixed(2)} say`);
+});
+
+test('marks and rated rounds train together', () => {
+  const rounds = simulate(40);
+  const marks = thumbCards(20, 'both')
+    .map((card) => makeMark({ sections: [card.section], rating: card.likes }));
+  const { report } = trainTaste([...rounds, ...marks], { maxEpochs: 160 });
+  assert.equal(report.judgements, 60);
+  assert.equal(report.marks, 20);
+  assert.match(describeReport(report), /40 rounds and 20 marks/);
 });
 
 test('a trained model prefers the songs it steered', () => {

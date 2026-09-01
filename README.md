@@ -292,9 +292,12 @@ Each saved section can be:
 | **▶** | Play just that section on its own, at its own time signature. |
 | **＋ Song** | Drop it into the running order. |
 | **Edit** | Open it back up in the other tabs, exactly as you left it. |
+| **👍 👎** | Tell the model what you think of it. See [Train](#train). |
+| **✎ Rename** | Call it something else. Nothing about the music changes. |
 | **Fork** | Copy it into a new section, so you can take a variation somewhere else without losing the original. **Fork a variation** does the same and rolls a new melody over the same chords — the quick way to get a B out of an A. |
-| **↻ Regenerate ▾** | Roll it again. See below. |
+| **↻ Regenerate ▾** | Roll it again, or send it off on one of the composer's variations. See below. |
 | **📚** | File it in the library, to use in another song. |
+| **🗑** | Throw it away. It asks first, and tells you how many places in the running order are about to lose it. |
 
 The running order is a row of chips: reorder them with ‹ ›, set how many times
 each one repeats, and drop them out again with ✕. **Auto-arrange** lays out
@@ -357,6 +360,60 @@ change. If you would rather not risk what you have, tick **leave the original
 alone** and the new take is filed beside it. Write a **seed** in and the same
 section rolled with the same seed comes out the same way twice, so a take you
 have rolled past can be got back.
+
+#### The variations
+
+When the composer writes a song it does not write five sections. It writes one
+and then *pulls the others away from it*: into the parallel major, with no bass,
+with the tune sitting higher, in another colour underneath, played at 80%. Those
+are the phrases printed under a composed card, and they were read-only — the
+dice made those decisions and you lived with them.
+
+The same list is now in the bottom half of the **▾** dialog, with the dice taken
+out of it. There are three kinds of row and the difference is whether the section
+can be asked what it is currently doing.
+
+**Switches** are states you can read off the music and set either way — *no
+bass*, *no drums*, *no tune*. A section with no bass opens with the box already
+ticked; untick it and it is written one. These are the only things on a card's
+trait line that are *derived* rather than stored, so a section that has had its
+bass put back stops claiming it has none.
+
+**Dials** are numbers you can read and move: **played at** (how hard, against
+the rest of the song) and **taken at** (this section against the transport — a
+half-time coda, a chorus pushed a shade faster). A dial you do not touch is not
+sent, so a variation that quietens a section is not immediately undone by a
+slider you only looked at.
+
+**Moves** are one-way pushes with no obvious inverse, and applying one leaves a
+line behind saying what it did:
+
+| | |
+| --- | --- |
+| **Another set of voices** | All four players swapped. Not a note changes. |
+| **Another colour underneath** | New harmony and lead, same bass and kit — the middle-eight move. |
+| **A different kit** | Other drums, other pieces, another way of laying out the bar. |
+| **Another bass** | A different instrument on the bottom line, playing the same notes. |
+| **The chords move twice as fast / are held twice as long** | Same bars, twice or half as many changes in them. |
+| **Half the length / twice the length** | The front of the progression, or it round again — with the tune re-cut to fit. |
+| **A modal vamp** | Two or three chords going round instead of a progression going somewhere. |
+| **Busier, and more chromatic** | More notes, fewer rests, more sevenths and more colour in the changes. |
+| **More air in it** | Fewer notes and longer rests. The hardest thing to make yourself do. |
+| **Held back / flat out** | Quieter and thinner, or louder and pushing. A verse after a big chorus, or the last one. |
+| **The tune sits higher / lower / an octave up** | The whole line moved, notes and all — nothing is rewritten. |
+
+A move mostly cannot do its own work: making a section busier means *writing* a
+busier melody, which is the melody generator's job. So each one says what it
+disturbs, and that gets rolled again whether or not you ticked it at the top —
+a busier section with the old tune still on it is not busier. A move that cannot
+apply to this section, such as putting a tune up an octave on a section with no
+tune, is greyed out rather than quietly doing nothing.
+
+The key controls have shortcuts of their own now — **the relative**, **the
+parallel**, **up a fourth**, **up a fifth**, **up a semitone**, **up to the flat
+sixth** — which only fill in the two selects above them, so you can see what you
+asked for before you ask for it. And there is a **count**, which re-cuts the
+parts onto another bar without rewriting any of them.
 
 ### Compose a whole song
 
@@ -431,6 +488,16 @@ the time signature, the feel, the tuning, the mix, which parts are switched on,
 the idea still open on the other tabs, and the words it was all cut up from.
 **Open** puts you back where you were rather than merely playing you something —
 it asks first, because it replaces what you have.
+
+Both kinds of card carry **✎ Rename** and **👍 👎**. Renaming a song sets the
+name it is filed under *and* the one it takes with it into a file, so an
+exported `.cutsong` does not revert to what it was called last week. The thumbs
+go to the [Train](#train) tab's file — a song on this shelf is a song you thought
+was worth keeping, and that is worth telling the model.
+
+**🗑** asks before it does anything, and says what is about to go — this is the
+one shelf in the app where the dice cannot give it back. If you want a copy that
+outlives the browser, press **⤓ File** first.
 
 ### Files
 
@@ -525,6 +592,48 @@ stored as silence, not as a middling score — the model needs to be able to tel
 something you actually want, **＋ Keep these** puts the sections on the Song tab
 like anything else you saved.
 
+### The quick way: 👍 and 👎
+
+The card game is the thorough way, and it is also twenty minutes of concentrated
+work that most people will do once and then never again. So there is a second
+way in, and for most people it will be the main one.
+
+Every section card on the **Song** tab, every section and every song on the
+**Library** tab, and the running order itself all carry a pair of thumbs. One
+click, on music you were already listening to for your own reasons. Press the
+lit one again to take it back — *I have changed my mind and now have no view* is
+a thing you need to be able to say.
+
+Those go into exactly the same file, and count for less. Concretely:
+
+- A thumb says only **yes** or **no**, so it teaches only the *as a whole*
+  question. It never guesses which of the tune, the chords and the groove you
+  meant; inventing three opinions out of one would put words in your mouth.
+- A **section** mark is weighted 0.6 against a rated hand's 1. A **song** mark is
+  weighted 0.3 for each of its sections — liking a song is not the same as liking
+  each part of it — but 0.5 for each *join*, because what liking a whole song
+  really says is that the order worked, and that is a thing the card game can
+  barely ask about.
+- A mark is filed under the *music* rather than the moment, so marking the same
+  chorus in the drawer and on the shelf is one opinion, and changing your mind
+  replaces the old one instead of arguing with it. Roll the section again and it
+  is different music: the mark you gave the take before stays true of the take
+  before.
+
+One exact caveat about those weights, since it would otherwise be a lie by
+implication: the trainer divides each batch by the sum of its weights, so making
+*everything* lighter changes nothing. A weight is only ever a ratio against the
+other rows in the same file. Teach it entirely with thumbs and it learns from
+them at full strength — they are all you have said. Mix them with rated hands
+and the hands lead.
+
+A mark cannot store a seed, because you made the music rather than being dealt
+it, so the record carries the music itself — trimmed to what the ear in
+`features.js` actually reads, which drops the melody-before-you-dragged-it, the
+edit ledger and, deliberately, the words. That is about 3 KB a section, against
+the twelve characters a dealt round costs. It is the price of an opinion about
+something real.
+
 ### Where your answers go
 
 Serve the app with `npm run taste` instead of `npm start` and a small local
@@ -550,12 +659,16 @@ Two files are committed, and they are not equal in value:
 - **`models/taste.json`** — the weights, derived from the above by
   `npm run train`. If it is ever lost or goes stale, retrain it.
 
-There is no music in `taste.jsonl`. Each line stores the *seed the sections were
-dealt from*, because dealing is deterministic — twelve characters puts the exact
-same bars back on the table a year later. That is why a thousand rounds is a few
-hundred kilobytes, and why changing how the music is measured never costs you a
-single opinion you gave: the trainer re-deals every round and re-measures it
-from scratch.
+A dealt round stores no music at all. Each line stores the *seed the sections
+were dealt from*, because dealing is deterministic — twelve characters puts the
+exact same bars back on the table a year later. That is why a thousand rounds is
+a few hundred kilobytes, and why changing how the music is measured never costs
+you a single opinion you gave: the trainer re-deals every round and re-measures
+it from scratch. A mark is the exception, and has to be: it is about music you
+made, which no seed of the dealer's points at, so it carries its own. Which also
+means a mark can never go stale — a round from an older dealer is kept in the
+file but not trained on, since its seed no longer points at the bars you heard,
+whereas a mark is as usable in ten years as it was the day you pressed it.
 
 ### Whether to believe it
 
@@ -589,7 +702,10 @@ reading.
 
 Expect roughly: under 30 rounds, noise. Around 60–100, something faintly real.
 Past a few hundred, a composer that noticeably leans your way. It is a thing to
-come back to, not an afternoon.
+come back to, not an afternoon — which is exactly why the thumbs exist: they
+turn "come back to it" into a side effect of using the app rather than a
+separate job of work. The line under **The model** counts the two apart, so an
+afternoon of thumbs never gets mistaken for a fortnight at the table.
 
 ### What it hears
 
@@ -828,7 +944,7 @@ is not one worth handing to anybody.
 ## Development
 
 ```sh
-npm test                        # 246 unit tests, no dependencies
+npm test                        # 269 unit tests, no dependencies
 npm start                       # serve the app
 npm run taste                   # serve it, recording judgements to data/taste.jsonl
 npm run train                   # fit models/taste.json from data/taste.jsonl
@@ -858,6 +974,7 @@ src/
     lyric-timeline.js  the words read back off a playing song, as subtitles
     sections.js     saved sections and the running order built from them
     regenerate.js   rolling a section again — all of it, or one part of it
+    variations.js   the composer's moves as controls: switches, dials and pushes
     compose.js      writes a whole song: shape, contrast, variation, bookends
     mixer.js        the desk: five channels, EQ, compression and one plate
     arrange.js      lays the parts out over the loop, or sections end to end
@@ -876,14 +993,18 @@ src/
     net.js          a multilayer perceptron, backward pass included, no deps
     model.js        the taste model: one shared trunk, four heads and a join
     train.js        folds, early stopping, and the held-out number that gates it
-    judgements.js   the .jsonl record format — seeds and opinions, no music
+    judgements.js   the .jsonl record format — dealt rounds, and thumbs on your
+                    own music
     store.js        loading and saving, with or without a server behind it
   ui/               one module per tab, one for each of the transport's drawers,
-                    one for the export and regenerate dialogs, plus DOM helpers
+                    one for the export and regenerate dialogs, one for the
+                    rename and confirm dialogs, one for the thumbs, plus DOM
+                    helpers
   main.js           state, persistence, tabs, transport
 data/
   words.*.json      the dictionaries
-  taste.jsonl       your judgements, one round per line — the file worth keeping
+  taste.jsonl       your judgements, one per line — rounds and marks together,
+                    and the file worth keeping
 models/
   taste.json        the trained weights, derived from the above
 tools/

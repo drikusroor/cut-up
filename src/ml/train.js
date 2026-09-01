@@ -31,7 +31,9 @@ import {
 } from './model.js';
 import { pairFeatures, sectionFeatures } from '../music/features.js';
 import { dealRound } from '../music/compose.js';
-import { usableJudgements } from './judgements.js';
+import {
+  isMark, MARK_WEIGHTS, markJoins, usableJudgements,
+} from './judgements.js';
 import { makeRng, shuffle } from '../rng.js';
 
 export function defaultTrainOptions() {
@@ -61,9 +63,20 @@ export function buildDataset(judgements, onProgress) {
   const usable = usableJudgements(judgements);
   const rounds = [];
   let skipped = 0;
+  let marks = 0;
 
   usable.forEach((record, index) => {
     onProgress?.(index / Math.max(1, usable.length), 'listening back');
+    // A mark brought its own music with it, so there is nothing to deal: it is
+    // featurized where it stands and joins the pile at whatever weight it says.
+    if (isMark(record)) {
+      const round = markRound(record);
+      if (round) {
+        rounds.push(round);
+        marks += 1;
+      } else skipped += 1;
+      return;
+    }
     let hand;
     try {
       hand = dealRound({ seed: record.seed, cards: record.cards || 2 });
@@ -105,7 +118,46 @@ export function buildDataset(judgements, onProgress) {
   });
 
   onProgress?.(1, 'listening back');
-  return { rounds, skipped, dropped: judgements.length - usable.length };
+  return {
+    rounds, marks, skipped, dropped: judgements.length - usable.length,
+  };
+}
+
+/**
+ * A thumb, turned into rows.
+ *
+ * Only the overall head is taught. A thumb up on a chorus says the chorus
+ * works; it does not say which of the tune, the changes and the groove made it
+ * work, and guessing on your behalf would put three opinions you never gave
+ * into the file. The joins are taught too when the mark covers a running order,
+ * because that — this went into that and it was right — is most of what liking
+ * a whole song actually means.
+ */
+function markRound(record) {
+  const music = record.music || [];
+  const rating = record.rating;
+  if (!music.length || !Number.isFinite(rating)) return null;
+  const weight = Number.isFinite(record.weight) ? record.weight : MARK_WEIGHTS.section;
+  // A song mark is worth less about its parts than about its seams — see
+  // MARK_WEIGHTS — so the joins keep more of it than the sections do.
+  const joinWeight = music.length > 1 ? Math.max(weight, MARK_WEIGHTS.join) : weight;
+
+  const values = music.map((section) => sectionFeatures(section).values);
+  const sections = music.map((section, index) => ({
+    name: section.name || `#${index + 1}`,
+    values: values[index],
+    targets: { overall: rating },
+    weight,
+  }));
+  const pairs = markJoins(record).map(([from, to]) => ({
+    join: `${sections[from].name}>${sections[to].name}`,
+    a: values[from],
+    b: values[to],
+    values: pairFeatures(music[from], music[to]).values,
+    target: rating,
+    weight: joinWeight,
+  }));
+  return { id: record.id, mark: true, sections, pairs };
 }
 
 /** Every section row in a set of rounds, for fitting the scaler. */
@@ -136,6 +188,11 @@ function epoch(model, rounds, optimizer) {
 
   for (const round of rounds) {
     for (const item of round.sections) {
+      // How hard this row is allowed to push. A rated round is a 1; a thumb
+      // pressed in passing is a fraction of one, and arrives here as a smaller
+      // gradient and a smaller share of the batch — which is exactly what
+      // "nudge it a bit in that direction" means in arithmetic.
+      const weight = Number.isFinite(item.weight) ? item.weight : 1;
       const embedding = model.embed(item.values);
       const logits = model.headLogits(embedding);
       const gradEmb = new Float64Array(embedding.length);
@@ -143,23 +200,24 @@ function epoch(model, rounds, optimizer) {
         const target = item.targets[head.id];
         if (!Number.isFinite(target)) continue;
         const { loss: l, grad } = bce(logits[head.id], target);
-        loss += l;
-        count += 1;
-        const back = model.heads[head.id].backward(Float64Array.from([grad]));
+        loss += l * weight;
+        count += weight;
+        const back = model.heads[head.id].backward(Float64Array.from([grad * weight]));
         for (let i = 0; i < gradEmb.length; i++) gradEmb[i] += back[i];
       }
       model.trunk.backward(gradEmb);
     }
 
     for (const item of round.pairs) {
+      const weight = Number.isFinite(item.weight) ? item.weight : 1;
       const embA = model.embed(item.a);
       const embB = model.embed(item.b, { second: true });
       const logit = model.pairLogit(embA, embB, item.values);
       const { loss: l, grad } = bce(logit, item.target);
-      loss += l;
-      count += 1;
+      loss += l * weight;
+      count += weight;
 
-      const back = model.pair.backward(Float64Array.from([grad]));
+      const back = model.pair.backward(Float64Array.from([grad * weight]));
       const size = embA.length;
       const gradA = new Float64Array(size);
       const gradB = new Float64Array(size);
@@ -298,6 +356,7 @@ export function trainTaste(judgements = [], options = {}, onProgress) {
 
   const report = emptyReport();
   report.judgements = dataset.rounds.length;
+  report.marks = dataset.marks;
   report.dropped = dataset.dropped;
   report.answers = dataset.rounds.reduce(
     (total, round) => total + round.sections.reduce((n, s) => n + Object.keys(s.targets).length, 0)
@@ -399,7 +458,14 @@ export function trainTaste(judgements = [], options = {}, onProgress) {
 export function describeReport(report) {
   const count = report?.judgements || 0;
   if (!count) return 'Never trained — no judgements have been fitted yet.';
-  const rounds = `${count} ${count === 1 ? 'round' : 'rounds'}`;
+  const marked = report?.marks || 0;
+  const dealt = count - marked;
+  // Marks and rounds are both opinions but they are not the same size of
+  // opinion, so the line says which it is made of rather than adding them up
+  // and letting you assume an evening at the table.
+  const rounds = marked
+    ? `${dealt} ${dealt === 1 ? 'round' : 'rounds'} and ${marked} ${marked === 1 ? 'mark' : 'marks'}`
+    : `${count} ${count === 1 ? 'round' : 'rounds'}`;
   const ranking = report?.holdout?.ranking;
   if (report?.note) return `${rounds} — ${report.note}`;
   if (!Number.isFinite(ranking)) {
